@@ -1,0 +1,24 @@
+{
+  "name": "electric-transport",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Durable stream transport for SSE-based AI apps.",
+  "scripts": {
+    "backend:down": "docker compose -f ./support/docker-compose.yaml down --volumes",
+    "backend:just_up": "docker compose -f ./support/docker-compose.yaml up -d",
+    "backend:ps": "docker compose -f ./support/docker-compose.yaml ps",
+    "backend:up": "pnpm backend:down && pnpm backend:just_up",
+    "dev:proxy": "dotenv -- pnpm --filter @electric-sql/transport-proxy dev",
+    "dev:demo": "dotenv -- pnpm --filter vercel-ai-sdk-demo dev",
+    "build": "dotenv -- pnpm -r build",
+    "clean": "pnpm -r clean",
+    "test": "dotenv -- pnpm -r test"
+  },
+  "dependencies": {
+    "dotenv-cli": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

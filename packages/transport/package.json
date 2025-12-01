@@ -1,0 +1,34 @@
+{
+  "name": "@electric-sql/transport",
+  "version": "0.1.0",
+  "description": "Durable transport for durable streams.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "author": "ElectricSQL",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@electric-sql/client": "^1.1.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  }
+}
