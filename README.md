@@ -14,7 +14,7 @@ Durable stream transport for SSE-based AI apps. Routes chat sessions / LLM reque
 - `proxy` - protocol agnostic proxy service
   - intercepts requests to the developer's backend API
   - writes messages from the user request to the database (for full history / catch-up)
-  - returns `{requestId, shapeUrl, shapeOffset}` for the client to consume the response messages
+  - returns `{requestId, sessionId, streamUrl, errorUrl}` for the client to consume the response messages
   - writes messages from the assistant response to the database (in the background)
 
 - `transport` - drop-in transport plugin

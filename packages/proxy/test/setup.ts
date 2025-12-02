@@ -12,7 +12,7 @@ export async function setup() {
   server = new PGLiteSocketServer({
     db,
     port: TEST_PORT,
-    host: '127.0.0.1',
+    host: `127.0.0.1`,
   })
 
   await server.start()

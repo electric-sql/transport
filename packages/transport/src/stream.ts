@@ -1,81 +1,172 @@
 import { ShapeStream } from '@electric-sql/client'
 import type { ChangeMessage, ControlMessage } from '@electric-sql/client'
-import type { APIRequest, APIResponse } from './schema'
+import { responseSchema, type APIRequest, type APIResponse } from './schema'
+import {
+  setActiveGeneration,
+  clearActiveGeneration,
+  type ActiveGeneration,
+} from './storage'
 
-type Headers = Record<string, string>
-type Stream = ShapeStream<any>
 type CleanupFn = () => void
-type Message = ChangeMessage | ControlMessage
+type Headers = Record<string, string>
+type Message = ChangeMessage<Record<string, unknown>> | ControlMessage
+type Stream = ShapeStream<Record<string, unknown>>
 
-// Given the `requestData` and `authHeaders` to make a request to the API proxy
-// endpoint, make the request and establish a shape stream subscription to the
-// response stream written to by the proxy endpoint.
-export async function create(proxyUrl: string, request: APIRequest, auth: Headers = {}, signal?: AbortSignal): Promise<{stream: Stream, cleanup: CleanupFn}> {
-  // Create a linked abort controller
-  const controller = new AbortController();
+export type StreamResult = {
+  stream: Stream
+  cleanup: CleanupFn
+  sessionId: string
+  responseData: APIResponse
+}
 
-  if (abortSignal) {
-    if (abortSignal.aborted) {
+export interface ProxyError extends Error {
+  response: Response
+}
+
+function createLinkedAbortController(signal?: AbortSignal): AbortController {
+  const controller = new AbortController()
+
+  if (signal !== undefined) {
+    if (signal.aborted) {
       controller.abort()
+    } else {
+      signal.addEventListener(`abort`, () => {
+        controller.abort()
+      })
     }
-    abortSignal.addEventListener('abort', () => {
-      controller.abort()
-    })
   }
 
-  // Make a fetch request to the proxy endpoint.
-  const response = await fetch(
-    proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.auth,
-      },
-      body: JSON.stringify(request),
-      signal: controller.signal
-    }
-  )
+  return controller
+}
+
+async function fetchProxyResponseData(
+  proxyUrl: string,
+  data: APIRequest,
+  auth: Headers,
+  signal: AbortSignal
+): Promise<APIResponse> {
+  const response = await fetch(proxyUrl, {
+    method: `POST`,
+    body: JSON.stringify(data),
+    headers: {
+      ...auth,
+      'Content-Type': `application/json`,
+    },
+    signal,
+  })
 
   if (!response.ok) {
-    const error = new Error('Proxy request failed')
+    const error = new Error(`Proxy request failed`) as ProxyError
     error.response = response
 
     throw error
   }
 
-  const { requestId, sessionId, shapeUrl }: ResponseData = await proxyResponse.json()
+  const responseData = await response.json()
 
-  // Make a fetch request to the proxy endpoint.
-  const shapeStream = new ShapeStream({
-    url: shapeUrl,
+  return responseSchema.parse(responseData)
+}
+
+// Given the request `data` and `auth` headers to make a request to the API proxy endpoint,
+// make the request and then establish a shape stream subscription to the response stream
+// written to by the proxy endpoint.
+export async function create(
+  proxyUrl: string,
+  data: APIRequest,
+  auth: Headers = {},
+  externalAbortSignal?: AbortSignal
+): Promise<StreamResult> {
+  const controller = createLinkedAbortController(externalAbortSignal)
+  const signal = controller.signal
+
+  const responseData = await fetchProxyResponseData(
+    proxyUrl,
+    data,
+    auth,
+    signal
+  )
+  const { requestId, sessionId, streamUrl /*, errorUrl */ } = responseData
+
+  const stream = new ShapeStream({
+    url: streamUrl,
     params: {
       requestId,
-      sessionId
+      sessionId,
     },
     liveSse: true,
-    signal: abortController.signal
+    signal: signal,
   })
 
-  const cleanup = () => {
-    internalController.abort();
-  };
+  // XXX todo: also subscribe to `errorUrl` if provided
 
   return {
-    cleanup,
-    shapeStream
+    stream,
+    cleanup: () => {
+      try {
+        controller.abort()
+      } finally {
+        clearActiveGeneration(sessionId)
+      }
+    },
+    sessionId,
+    responseData,
+  }
+}
+
+// Given the persisted active generation data, resume the stream subscription.
+export async function resume(
+  { data, handle, offset }: ActiveGeneration,
+  externalAbortSignal?: AbortSignal
+): Promise<StreamResult> {
+  const controller = createLinkedAbortController(externalAbortSignal)
+  const signal = controller.signal
+
+  const { requestId, sessionId, streamUrl /*, errorUrl */ } = data
+
+  const stream = new ShapeStream({
+    url: streamUrl,
+    handle: handle,
+    offset: offset,
+    params: {
+      requestId,
+      sessionId,
+    },
+    liveSse: true,
+    signal: signal,
+  })
+
+  // XXX todo: also subscribe to `errorUrl` if provided
+
+  return {
+    stream,
+    cleanup: () => {
+      try {
+        controller.abort()
+      } finally {
+        clearActiveGeneration(sessionId)
+      }
+    },
+    sessionId,
+    responseData: data,
   }
 }
 
 // Read the ShapeStream into a ReadableStream of chunks.
-export async function read(stream: Stream, cleanup: CleanupFn, signal?: AbortSignal): Promise<ReadableStream> {
+export async function read(
+  stream: Stream,
+  cleanup: CleanupFn,
+  sessionId: string,
+  responseData: APIResponse,
+  signal?: AbortSignal
+): Promise<ReadableStream> {
   let isClosed = false
-  let unsubscribe: (() => void) | null = null;
+  let unsubscribe: (() => void) | null = null
 
   const closeStream = () => {
     if (isClosed) return
 
     isClosed = true
-    if (unsubscribe) {
+    if (unsubscribe !== null) {
       unsubscribe()
 
       unsubscribe = null
@@ -84,40 +175,60 @@ export async function read(stream: Stream, cleanup: CleanupFn, signal?: AbortSig
     cleanup()
   }
 
-  return new ReadableStream<TChunk>({
+  return new ReadableStream<string>({
     start: async (controller) => {
-
       const close = () => {
-        closeStream();
+        closeStream()
 
         try {
           controller.close()
-        } catch (err) {}
+        } catch (_err) {
+          // Controller may already be closed
+        }
       }
 
       if (signal) {
-        signal.addEventListener('abort', close)
+        signal.addEventListener(`abort`, close)
       }
 
       try {
-        unsubscribe = shapeStream.subscribe((messages: Message[]) => {
+        unsubscribe = stream.subscribe((messages: Message[]) => {
           if (isClosed) return
 
           for (const msg of messages) {
-            const isControlMessage = msg.headers.control !== undefined
+            const isControlMessage = `control` in msg.headers
             if (isControlMessage) continue
 
-            const chunk = msg.value
+            const changeMsg = msg as ChangeMessage<Record<string, unknown>>
+            const row = changeMsg.value
 
-            if (isClosed) break
-            controller.enqueue(chunk)
-
-            if (chunk === '[DONE]') {
+            // Check the type field from our chunks table
+            if (row.type === `done`) {
               close()
-
               return
             }
+
+            if (row.type === `error`) {
+              controller.error(
+                new Error((row.data as string) || `Stream error`)
+              )
+              closeStream()
+              return
+            }
+
+            // Regular data chunk - enqueue the raw content
+            if (isClosed) break
+            controller.enqueue(row.data as string)
           }
+
+          // Persist the active generation state after processing each batch
+          // At this point, shapeHandle is guaranteed to be set (we've received messages)
+          setActiveGeneration(
+            sessionId,
+            responseData,
+            stream.shapeHandle!,
+            stream.lastOffset
+          )
         })
       } catch (error) {
         controller.error(error)

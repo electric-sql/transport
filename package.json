@@ -1,6 +1,7 @@
 {
   "name": "electric-transport",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "description": "Durable stream transport for SSE-based AI apps.",
   "scripts": {
@@ -9,16 +10,29 @@
     "backend:ps": "docker compose -f ./support/docker-compose.yaml ps",
     "backend:up": "pnpm backend:down && pnpm backend:just_up",
     "dev:proxy": "dotenv -- pnpm --filter @electric-sql/transport-proxy dev",
-    "dev:demo": "dotenv -- pnpm --filter vercel-ai-sdk-demo dev",
+    "dev:demo": "dotenv -- pnpm --filter @example/next-openai dev",
     "build": "dotenv -- pnpm -r build",
     "clean": "pnpm -r clean",
-    "test": "dotenv -- pnpm -r test"
+    "test": "dotenv -- vitest run",
+    "lint": "eslint packages/",
+    "lint:fix": "eslint packages/ --fix",
+    "format": "prettier --write 'packages/**/*.{ts,tsx,js,json}'",
+    "format:check": "prettier --check 'packages/**/*.{ts,tsx,js,json}'"
   },
   "dependencies": {
     "dotenv-cli": "^11.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@types/node": "^22.0.0",
-    "typescript": "^5.6.0"
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.7.3",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.48.0",
+    "vitest": "^2.1.9"
   }
 }

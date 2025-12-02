@@ -1,2 +1,2 @@
 export { handleApiRequest } from './api'
-export { handleShapeRequest } from './shape'
+export { handleStreamRequest } from './stream'

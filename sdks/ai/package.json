@@ -1,0 +1,37 @@
+{
+  "name": "@electric-sql/ai-transport",
+  "version": "0.1.0",
+  "description": "Durable transport adapter for the Vercel AI SDK.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "author": "ElectricSQL",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@electric-sql/transport": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "ai": "6.0.0-beta.128",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "ai": "5.x || 6.x"
+  }
+}

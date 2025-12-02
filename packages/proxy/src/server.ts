@@ -3,8 +3,8 @@ import express from 'express'
 import { Readable } from 'stream'
 
 import { proxyPort, proxyUrl } from './config'
-import { handleApiRequest, handleShapeRequest } from './handlers'
-import { apiRequestSchema, shapeRequestSchema } from './schema'
+import { handleApiRequest, handleStreamRequest } from './handlers'
+import { apiRequestSchema, streamRequestSchema } from './schema'
 
 import { applyMigrations, pool } from './db'
 await applyMigrations()
@@ -14,18 +14,18 @@ app.use(cors())
 app.use(express.json())
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() })
+app.get(`/health`, (req, res) => {
+  res.json({ status: `ok`, timestamp: Date.now() })
 })
 
 // Proxy requests to the developer's backend API.
-app.post('/api', async (req, res) => {
+app.post(`/api`, async (req, res) => {
   const result = apiRequestSchema.safeParse(req.body)
 
   if (!result.success) {
     return res.status(400).json({
-      error: 'Invalid',
-      details: result.error.errors
+      error: `Invalid`,
+      details: result.error.errors,
     })
   }
 
@@ -34,17 +34,17 @@ app.post('/api', async (req, res) => {
 })
 
 // Proxy requests to Electric.
-app.get('/shape', async (req, res) => {
-  const result = shapeRequestSchema.safeParse(req.query)
+app.get(`/stream`, async (req, res) => {
+  const result = streamRequestSchema.safeParse(req.query)
 
   if (!result.success) {
     return res.status(400).json({
-      error: 'Invalid',
-      details: result.error.errors
+      error: `Invalid`,
+      details: result.error.errors,
     })
   }
 
-  const response = await handleShapeRequest(result.data)
+  const response = await handleStreamRequest(result.data)
   res.status(response.status)
 
   const headers = new Headers(response.headers)
@@ -75,5 +75,5 @@ const gracefulShutdown = (signal) => {
   }, 60_000)
 }
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
-process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+process.on(`SIGTERM`, () => gracefulShutdown(`SIGTERM`))
+process.on(`SIGINT`, () => gracefulShutdown(`SIGINT`))

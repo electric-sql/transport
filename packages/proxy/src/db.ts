@@ -3,7 +3,7 @@ import { databasePoolSize, databaseUrl } from './config'
 
 export const pool = new Pool({
   connectionString: databaseUrl,
-  max: databasePoolSize
+  max: databasePoolSize,
 })
 
 const migrations = `
@@ -11,7 +11,8 @@ const migrations = `
     id BIGSERIAL PRIMARY KEY,
     session UUID NOT NULL,
     request UUID NOT NULL,
-    data JSONB NOT NULL,
+    type TEXT NOT NULL DEFAULT 'data',
+    data TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
   );
 
@@ -30,11 +31,28 @@ export async function applyMigrations(): Promise<void> {
   }
 }
 
-export async function insertChunks(session: string, request: string, chunks: string[]): Promise<void> {
+export async function insertChunks(
+  session: string,
+  request: string,
+  chunks: string[]
+): Promise<void> {
   if (chunks.length === 0) return
 
   await pool.query(
-    `INSERT INTO chunks (session, request, data) SELECT $1, $2, unnest($3::text[])::jsonb`,
+    `INSERT INTO chunks (session, request, type, data)
+     SELECT $1, $2, 'data', unnest($3::text[])`,
     [session, request, chunks]
+  )
+}
+
+export async function insertControlMessage(
+  session: string,
+  request: string,
+  type: `done` | `error`,
+  data?: string
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO chunks (session, request, type, data) VALUES ($1, $2, $3, $4)`,
+    [session, request, type, data ?? null]
   )
 }
