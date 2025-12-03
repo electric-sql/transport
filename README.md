@@ -15,6 +15,7 @@ Durable stream transport, proxy and AI SDK adapters.
 
 - `*-transport` -- protocol specific adapters
   - `ai-transport` for the Vercel AI SDK
+  - `tanstack-ai-transport` for TanStack AI
   - ... more coming soon ...
 
 ### Seperation of concerns
@@ -81,6 +82,7 @@ We can move to just a `streamId` when we have this.
 Standard AI SDK demos adapted to use the Electric Durable stream transport:
 
 - `next-openai-app` -- Vercel AI SDK + Next.js + OpenAI demo
+- `tanstack-react-chat` -- TanStack AI + TanStack Start + OpenAI demo
 
 ## Usage
 
@@ -92,8 +94,11 @@ pnpm backend:up
 # In one terminal
 pnpm dev:proxy
 
-# In another
+# In another terminal, run the default demo (next-openai-app)
 pnpm dev:demo
+
+# Or specify a demo by name
+pnpm dev:demo tanstack-react-chat
 ```
 
 Then http://localhost:5173

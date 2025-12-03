@@ -1,0 +1,47 @@
+{
+  "name": "tanstack-react-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 5173",
+    "build": "vite build",
+    "serve": "vite preview",
+    "test": "exit 0"
+  },
+  "dependencies": {
+    "@electric-sql/tanstack-ai-transport": "workspace:*",
+    "@tailwindcss/vite": "^4.1.17",
+    "@tanstack/ai": "0.1.0",
+    "@tanstack/ai-client": "0.1.0",
+    "@tanstack/ai-openai": "file:/Users/thruflo/Development/TanStack/ai/packages/typescript/ai-openai/tanstack-ai-openai-0.1.0.tgz",
+    "@tanstack/ai-react": "0.1.0",
+    "@tanstack/nitro-v2-vite-plugin": "^1.139.0",
+    "@tanstack/react-devtools": "^0.8.2",
+    "@tanstack/react-router": "^1.139.7",
+    "@tanstack/react-router-devtools": "^1.139.7",
+    "@tanstack/react-start": "^1.139.8",
+    "@tanstack/router-plugin": "^1.139.7",
+    "highlight.js": "^11.11.1",
+    "lucide-react": "^0.555.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.1.17",
+    "vite-tsconfig-paths": "^5.1.4",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@tanstack/devtools-vite": "^0.3.11",
+    "@tanstack/react-ai-devtools": "0.1.8",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "5.9.3",
+    "vite": "^7.2.4"
+  }
+}

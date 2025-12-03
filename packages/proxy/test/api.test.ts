@@ -79,7 +79,9 @@ describe(`handleApiRequest`, () => {
           'content-type': `application/json`,
           'x-custom': `test`,
         },
-        body: JSON.stringify({ messages: [{ role: `user`, content: `Hello` }] }),
+        body: JSON.stringify({
+          messages: [{ role: `user`, content: `Hello` }],
+        }),
       })
     )
 

@@ -4,7 +4,7 @@ import {
   type HttpChatTransportInitOptions,
   type PrepareReconnectToStreamRequest,
   type PrepareSendMessagesRequest,
-  type UIMessage
+  type UIMessage,
 } from 'ai'
 
 import {
@@ -14,7 +14,7 @@ import {
   setPersistedMessages,
   toUUID,
   type FetchClientOptions,
-  type StorageOptions
+  type StorageOptions,
 } from '@electric-sql/transport'
 
 // Options for configuring the durable transport behavior.
@@ -44,13 +44,13 @@ export type OnFinishOptions<UI_MESSAGE extends UIMessage = UIMessage> = {
   isDisconnect: boolean
   isError: boolean
   finishReason?:
-    | 'stop'
-    | 'length'
-    | 'content-filter'
-    | 'tool-calls'
-    | 'error'
-    | 'other'
-    | 'unknown'
+    | `stop`
+    | `length`
+    | `content-filter`
+    | `tool-calls`
+    | `error`
+    | `other`
+    | `unknown`
 }
 
 // The configuration object that can be spread into useChat() options.
@@ -133,7 +133,7 @@ export function durableTransport<UI_MESSAGE extends UIMessage = UIMessage>(
   const {
     activeGeneration = {},
     messages = {},
-    onFinish: userOnFinish
+    onFinish: userOnFinish,
   } = durableOptions
 
   // Create the custom fetch client that routes through the proxy
@@ -162,9 +162,9 @@ export function durableTransport<UI_MESSAGE extends UIMessage = UIMessage>(
       id: sessionId,
       transport,
       resume: true,
-      onFinish
+      onFinish,
     },
-    initialMessages
+    initialMessages,
   }
 }
 
@@ -185,15 +185,15 @@ function buildTransport<UI_MESSAGE extends UIMessage>(
     opts
   ) => {
     const headers = normalizeHeaders(opts.headers)
-    headers.set('X-Session-ID', toUUID(sessionId))
-    headers.set('X-Resume-Active-Generation', 'true')
+    headers.set(`X-Session-ID`, toUUID(sessionId))
+    headers.set(`X-Resume-Active-Generation`, `true`)
     // The AI SDK needs complete message reconstruction on page reload,
     // so we request the stream to replay from the beginning.
-    headers.set('X-Replay-From-Start', 'true')
+    headers.set(`X-Replay-From-Start`, `true`)
 
     // Pass TTL via header so fetch client can use it for storage lookup
     if (activeGenerationTtlMs !== undefined) {
-      headers.set('X-Active-Generation-TTL', String(activeGenerationTtlMs))
+      headers.set(`X-Active-Generation-TTL`, String(activeGenerationTtlMs))
     }
 
     const original = transportOptions.prepareReconnectToStreamRequest
@@ -207,7 +207,7 @@ function buildTransport<UI_MESSAGE extends UIMessage>(
     opts
   ) => {
     const headers = normalizeHeaders(opts.headers)
-    headers.set('X-Session-ID', toUUID(sessionId))
+    headers.set(`X-Session-ID`, toUUID(sessionId))
 
     setPersistedMessages(sessionId, opts.messages)
 
@@ -222,7 +222,7 @@ function buildTransport<UI_MESSAGE extends UIMessage>(
       id: opts.id,
       messages: opts.messages,
       trigger: opts.trigger,
-      messageId: opts.messageId
+      messageId: opts.messageId,
     }
 
     return { body, headers, credentials: opts.credentials, api: opts.api }
@@ -232,7 +232,7 @@ function buildTransport<UI_MESSAGE extends UIMessage>(
     ...transportOptions,
     fetch,
     prepareReconnectToStreamRequest,
-    prepareSendMessagesRequest
+    prepareSendMessagesRequest,
   })
 }
 
@@ -274,5 +274,5 @@ function normalizeHeaders(headers: HeadersInit | undefined): Headers {
 export {
   clearPersistedMessages,
   clearSession,
-  type StorageOptions
+  type StorageOptions,
 } from '@electric-sql/transport'
