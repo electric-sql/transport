@@ -1,0 +1,39 @@
+{
+  "name": "@electric-sql/tanstack-ai-transport",
+  "version": "0.1.0",
+  "description": "Durable transport adapter for TanStack AI.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "author": "ElectricSQL",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@electric-sql/transport": "workspace:*"
+  },
+  "devDependencies": {
+    "@tanstack/ai": "0.1.0",
+    "@tanstack/ai-client": "0.1.0",
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "@tanstack/ai": "*",
+    "@tanstack/ai-client": "*"
+  }
+}

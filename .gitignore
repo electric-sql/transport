@@ -32,6 +32,10 @@ lerna-debug.log*
 # Vercel
 .vercel
 
+# TanStack
+.nitro/
+.output/
+
 # TypeScript
 *.tsbuildinfo
 
