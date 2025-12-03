@@ -1,9 +1,9 @@
-import type { APIRequest } from './schema'
 import { getActiveGeneration } from './storage'
 import {
   create,
   read,
   resume,
+  type CreateRequest,
   type ProxyError,
   type StreamResult,
 } from './stream'
@@ -38,48 +38,28 @@ function getOrGenerateId(headers: Headers, headerName: string): string {
   return crypto.randomUUID()
 }
 
-async function parseRequestBody(
-  request: Request
-): Promise<unknown | undefined> {
-  const contentType = request.headers.get(`Content-Type`)
+// Headers to strip when forwarding to upstream API
+const TRANSPORT_HEADERS_TO_STRIP = new Set([
+  `x-request-id`,
+  `x-session-id`,
+  `x-resume-active-generation`,
+  `x-replay-from-start`,
+  `x-active-generation-ttl`,
+  `host`,
+  `connection`,
+  `content-length`,
+  `transfer-encoding`,
+])
 
-  if (contentType?.includes(`application/json`)) {
-    const text = await request.text()
-
-    if (text) {
-      return JSON.parse(text)
-    }
-  }
-
-  return undefined
-}
-
-function extractForwardHeaders(
-  headers: Headers
-): Record<string, string> | undefined {
+function extractForwardHeaders(headers: Headers): Record<string, string> {
   const result: Record<string, string> = {}
-  let hasHeaders = false
 
   headers.forEach((value, key) => {
-    const lowerKey = key.toLowerCase()
-
-    // Skip transport-specific headers and standard hop-by-hop headers
-    if (
-      lowerKey === `x-request-id` ||
-      lowerKey === `x-session-id` ||
-      lowerKey === `host` ||
-      lowerKey === `connection` ||
-      lowerKey === `content-length` ||
-      lowerKey === `transfer-encoding`
-    ) {
-      return
-    }
-
+    if (TRANSPORT_HEADERS_TO_STRIP.has(key.toLowerCase())) return
     result[key] = value
-    hasHeaders = true
   })
 
-  return hasHeaders ? result : undefined
+  return result
 }
 
 // Create a fetch-compatible client that routes requests through the transport proxy.
@@ -121,31 +101,31 @@ export function createFetchClient(options: FetchClientOptions): FetchFn {
       `X-Resume-Active-Generation`
     )
     if (shouldResumeActiveGeneration) {
-      const activeGeneration = getActiveGeneration(sessionId)
+      const replayFromStart = request.headers.get(`X-Replay-From-Start`) === `true`
+      const ttlHeader = request.headers.get(`X-Active-Generation-TTL`)
+      const ttlMs = ttlHeader !== null ? parseInt(ttlHeader, 10) : undefined
 
+      const activeGeneration = getActiveGeneration(sessionId, ttlMs)
       if (activeGeneration === null) {
-        return new Response(``, { status: 204 })
+        return new Response(null, { status: 204 })
       }
-
       requestId = activeGeneration.data.requestId
-      streamResult = await resume(activeGeneration)
+      streamResult = await resume(activeGeneration, { replayFromStart })
     } else {
       requestId = getOrGenerateId(request.headers, `X-Request-ID`)
 
-      const body = await parseRequestBody(request)
-      const headers = extractForwardHeaders(request.headers)
-
-      const apiRequest: APIRequest = {
-        requestId,
+      const body = await request.text()
+      const createRequest: CreateRequest = {
         sessionId,
-        url: request.url,
-        method: request.method as APIRequest[`method`],
-        headers,
-        body,
+        requestId,
+        targetUrl: request.url,
+        method: request.method,
+        headers: extractForwardHeaders(request.headers),
+        body: body || null
       }
 
       try {
-        streamResult = await create(proxyUrl, apiRequest, auth)
+        streamResult = await create(proxyUrl, createRequest, auth)
       } catch (error) {
         if (isProxyError(error)) {
           return error.response
@@ -156,17 +136,25 @@ export function createFetchClient(options: FetchClientOptions): FetchFn {
     }
 
     const {
-      stream,
+      dataStream,
+      controlStream,
       cleanup,
       sessionId: streamSessionId,
       responseData,
     } = streamResult
-    const body = await read(stream, cleanup, streamSessionId, responseData)
+
+    const body = await read(
+      dataStream,
+      controlStream,
+      cleanup,
+      streamSessionId,
+      responseData
+    )
 
     return new Response(body, {
       status: 200,
       headers: {
-        'Content-Type': `text/event-stream`,
+        'Content-Type': responseData.contentType ?? `application/octet-stream`,
         'Cache-Control': `no-cache`,
         Connection: `keep-alive`,
         'X-Request-ID': requestId,

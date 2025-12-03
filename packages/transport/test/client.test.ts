@@ -16,6 +16,21 @@ describe(`createFetchClient`, () => {
   const proxyUrl = `http://localhost:4000/api`
   const mockCleanup = vi.fn()
 
+  const createMockStreamResult = (overrides = {}) => ({
+    dataStream: { id: `mock-data-stream` },
+    controlStream: { id: `mock-control-stream` },
+    cleanup: mockCleanup,
+    sessionId: `mock-session-id`,
+    responseData: {
+      sessionId: `mock-session-id`,
+      requestId: `mock-request-id`,
+      streamUrl: `http://localhost:4000/stream/data`,
+      controlUrl: `http://localhost:4000/stream/control`,
+      contentType: `text/event-stream`,
+    },
+    ...overrides,
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
 
@@ -26,13 +41,9 @@ describe(`createFetchClient`, () => {
 
   describe(`header parsing`, () => {
     it(`uses provided X-Request-ID and X-Session-ID headers`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -58,13 +69,9 @@ describe(`createFetchClient`, () => {
     })
 
     it(`generates UUIDs when headers are not provided`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -88,13 +95,9 @@ describe(`createFetchClient`, () => {
     })
 
     it(`generates missing IDs individually`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -126,13 +129,9 @@ describe(`createFetchClient`, () => {
 
   describe(`request forwarding`, () => {
     it(`forwards URL correctly`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -146,20 +145,16 @@ describe(`createFetchClient`, () => {
       expect(stream.create).toHaveBeenCalledWith(
         proxyUrl,
         expect.objectContaining({
-          url: `https://api.example.com/v1/chat/completions`,
+          targetUrl: `https://api.example.com/v1/chat/completions`,
         }),
         {}
       )
     })
 
     it(`forwards HTTP method correctly`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -179,14 +174,10 @@ describe(`createFetchClient`, () => {
       )
     })
 
-    it(`forwards JSON body correctly`, async () => {
-      const mockStream = {}
+    it(`forwards body as stream`, async () => {
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -201,23 +192,16 @@ describe(`createFetchClient`, () => {
         body: JSON.stringify(requestBody),
       })
 
-      expect(stream.create).toHaveBeenCalledWith(
-        proxyUrl,
-        expect.objectContaining({
-          body: requestBody,
-        }),
-        {}
-      )
+      // Body is now passed as a stream, not parsed JSON
+      const createCall = vi.mocked(stream.create).mock.calls[0]
+      const createRequest = createCall[1]
+      expect(createRequest.body).toBeDefined()
     })
 
     it(`forwards custom headers excluding transport headers`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -248,13 +232,9 @@ describe(`createFetchClient`, () => {
     })
 
     it(`handles requests without body`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -267,7 +247,7 @@ describe(`createFetchClient`, () => {
         proxyUrl,
         expect.objectContaining({
           method: `GET`,
-          body: undefined,
+          body: null,
         }),
         {}
       )
@@ -276,13 +256,9 @@ describe(`createFetchClient`, () => {
 
   describe(`auth headers`, () => {
     it(`passes auth headers to create function`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const auth = { 'X-API-Key': `secret-key` }
@@ -304,7 +280,6 @@ describe(`createFetchClient`, () => {
 
   describe(`successful response`, () => {
     it(`returns 200 response with streaming body`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream({
         start(controller) {
           controller.enqueue(`test chunk`)
@@ -312,10 +287,7 @@ describe(`createFetchClient`, () => {
         },
       })
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -337,14 +309,17 @@ describe(`createFetchClient`, () => {
       expect(response.body).toBe(mockBody)
     })
 
-    it(`calls read with stream and cleanup from create`, async () => {
-      const mockStream = { id: `test-stream` }
+    it(`calls read with both data and control streams from create`, async () => {
+      const mockDataStream = { id: `test-data-stream` }
+      const mockControlStream = { id: `test-control-stream` }
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(
+        createMockStreamResult({
+          dataStream: mockDataStream,
+          controlStream: mockControlStream,
+        })
+      )
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -355,7 +330,18 @@ describe(`createFetchClient`, () => {
         body: JSON.stringify({}),
       })
 
-      expect(stream.read).toHaveBeenCalledWith(mockStream, mockCleanup)
+      expect(stream.read).toHaveBeenCalledWith(
+        mockDataStream,
+        mockControlStream,
+        mockCleanup,
+        `mock-session-id`,
+        expect.objectContaining({
+          sessionId: `mock-session-id`,
+          requestId: `mock-request-id`,
+          streamUrl: `http://localhost:4000/stream/data`,
+          controlUrl: `http://localhost:4000/stream/control`,
+        })
+      )
     })
   })
 
@@ -420,12 +406,7 @@ describe(`createFetchClient`, () => {
     })
 
     it(`rethrows errors from read function`, async () => {
-      const mockStream = {}
-
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockRejectedValue(new Error(`Stream read error`))
 
       const fetch = createFetchClient({ proxyUrl })
@@ -442,13 +423,9 @@ describe(`createFetchClient`, () => {
 
   describe(`input normalization`, () => {
     it(`handles URL object as input`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -463,20 +440,16 @@ describe(`createFetchClient`, () => {
       expect(stream.create).toHaveBeenCalledWith(
         proxyUrl,
         expect.objectContaining({
-          url: `https://api.example.com/chat`,
+          targetUrl: `https://api.example.com/chat`,
         }),
         {}
       )
     })
 
     it(`handles Request object as input`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -494,23 +467,18 @@ describe(`createFetchClient`, () => {
       expect(stream.create).toHaveBeenCalledWith(
         proxyUrl,
         expect.objectContaining({
-          url: `https://api.example.com/chat`,
+          targetUrl: `https://api.example.com/chat`,
           method: `POST`,
           requestId: `from-request-object`,
-          body: { test: true },
         }),
         {}
       )
     })
 
     it(`handles string URL as input`, async () => {
-      const mockStream = {}
       const mockBody = new ReadableStream()
 
-      vi.mocked(stream.create).mockResolvedValue({
-        stream: mockStream,
-        cleanup: mockCleanup,
-      })
+      vi.mocked(stream.create).mockResolvedValue(createMockStreamResult())
       vi.mocked(stream.read).mockResolvedValue(mockBody)
 
       const fetch = createFetchClient({ proxyUrl })
@@ -524,7 +492,7 @@ describe(`createFetchClient`, () => {
       expect(stream.create).toHaveBeenCalledWith(
         proxyUrl,
         expect.objectContaining({
-          url: `https://api.example.com/chat`,
+          targetUrl: `https://api.example.com/chat`,
         }),
         {}
       )

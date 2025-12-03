@@ -21,7 +21,7 @@ export default function ChatInput({
       }}
     >
       <input
-        className="fixed bottom-0 w-full max-w-md p-2 mb-8 border border-gray-300 rounded shadow-xl"
+        className="fixed bottom-0 w-full max-w-md p-2 mb-8 border border-gray-300 dark:border-gray-600 rounded shadow-xl bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
         placeholder="Say something..."
         disabled={status !== `ready`}
         value={text}

@@ -1,20 +1,27 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { durableTransport } from '@electric-sql/ai-transport'
 import ChatInput from '@/components/chat-input'
 
-const proxyUrl = process.env.NEXT_PUBLIC_PROXY_URL || `http://localhost:4000`
-const durable = durableTransport({ proxyUrl }, {
-  api: `/api/chat`
-})
+const proxyUrl = process.env.NEXT_PUBLIC_PROXY_URL || `http://localhost:4000/api`
+
+// Create the durable session configuration outside the component
+// to ensure stable references across renders.
+const { durableSession, initialMessages } = durableTransport(
+  `demo`,
+  { proxyUrl },
+  { api: `/api/chat` }
+)
 
 export default function Chat() {
-  const { error, status, sendMessage, messages, regenerate, stop } = useChat({
-    id: `demo`,
-    transport: durable,
-    // resume: true
+  const { error, status, sendMessage, messages, setMessages, regenerate, stop } = useChat({
+    ...durableSession
   })
+
+  // Load persisted messages after hydration to avoid SSR mismatch.
+  useEffect(() => setMessages(initialMessages), [setMessages])
 
   return (
     <div className="flex flex-col w-full max-w-md py-24 mx-auto stretch">
@@ -44,7 +51,7 @@ export default function Chat() {
 
       {error && (
         <div className="mt-4">
-          <div className="text-red-500">An error occurred.</div>
+          <div className="text-red-500">An error occurred: {error.message}</div>
           <button
             type="button"
             className="px-4 py-2 mt-4 text-blue-500 border border-blue-500 rounded-md"

@@ -1,166 +1,137 @@
+import type { Readable } from 'stream'
 import { proxyUrl } from '../config'
-import { insertChunks, insertControlMessage } from '../db'
-import type { APIRequestData } from '../schema'
+import { insertDataChunk, insertControlMessage } from '../db'
+import type { APIRequestParams, APIRequestHeaders } from '../schema'
 
-type APIResponse = {
+export type APIResponse = {
   sessionId: string
   requestId: string
   streamUrl: string
-  errorUrl?: string
+  controlUrl: string
+  contentType?: string
 }
 
-type ErrorResponse = {
+export type ErrorResponse = {
   status: `error`
   response: Response
 }
 
-const MAX_PENDING_CHUNKS = 50
-
-function parseLine(line: string): string | null {
-  line = line.trim()
-  if (!line) return null
-
-  // Strip SSE data: prefix if present, keep raw content
-  if (line.startsWith(`data:`)) {
-    line = line.slice(5).trimStart()
-  }
-
-  if (!line) return null
-
-  // Return raw content, including [DONE] or any other marker
-  return line
+export type APIRequestData = {
+  params: APIRequestParams
+  proxyHeaders: APIRequestHeaders
+  forwardHeaders: Record<string, string>
+  body: Readable
 }
 
-async function persistNewUserMessages(messages: unknown[]): Promise<void> {
-  // XXX store all the *new* messages
-  // XXX how do we determine that?!
-
-  // What format can they be in?
-
-  console.log(`XXX todo - persistNewUserMessages`)
-  console.log(messages)
-
-  // const lastMessage = body.messages[body.messages.length - 1]
-  // if (lastMessage && lastMessage.role === 'user') {
-  //   // Insert a "start" chunk for the user message
-  //   await insertChunk(sessionId, messageId, 'user', 'start', {
-  //     messageId: messageId,
-  //     role: 'user'
-  //   })
-
-  //   // Insert user message content
-  //   // Handle both parts-based messages (AI SDK 5) and content-based messages
-  //   const content = lastMessage.parts?.[0]?.text || lastMessage.content
-  //   if (content) {
-  //     await insertChunk(sessionId, messageId, 'user', 'text-delta', {
-  //       id: 'user-text',
-  //       delta: content
-  //     })
-  //   }
-
-  //   // Mark user message as complete
-  //   await insertChunk(sessionId, messageId, 'user', 'finish', {})
-  // }
-}
-
+/**
+ * Process a streaming API response by relaying raw chunks to the database.
+ *
+ * Uses a buffer accumulation pattern that maximizes throughput:
+ * - Consumes the HTTP stream as fast as possible
+ * - Writes to DB as fast as the DB allows
+ * - Accumulates chunks in memory while a write is in progress
+ * - When write completes, flushes accumulated buffer as a single row
+ *
+ * This is protocol-agnostic: we relay raw bytes without parsing.
+ *
+ * Tracks the lastDataRowId for each insert to enable synchronization
+ * between the data and control streams.
+ */
 async function processApiResponse(
-  data: APIRequestData,
+  sessionId: string,
+  requestId: string,
   body: ReadableStream<Uint8Array>
 ): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
+
   let buffer = ``
+  let writeInProgress: Promise<string> | null = null
+  let lastDataRowId: string = `0`.padStart(20, `0`)
 
-  let pendingChunks: string[] = []
-  let writeInProgress: Promise<void> | null = null
+  const flush = (): void => {
+    if (writeInProgress !== null || buffer.length === 0) return
 
-  // Flush accumulated chunks (non-blocking)
-  function tryFlush() {
-    if (writeInProgress || pendingChunks.length === 0) return
+    const chunk = buffer
+    buffer = ``
 
-    const batch = pendingChunks
-    pendingChunks = []
-
-    writeInProgress = insertChunks(
-      data.sessionId,
-      data.requestId,
-      batch
-    ).finally(() => {
-      writeInProgress = null
-
-      tryFlush()
-    })
+    writeInProgress = insertDataChunk(sessionId, requestId, chunk)
+      .then((rowId) => {
+        lastDataRowId = rowId
+        return rowId
+      })
+      .finally(() => {
+        writeInProgress = null
+        flush()
+      })
   }
 
   try {
-    // Read stream
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
+      flush()
+    }
 
-      let idx
-      while ((idx = buffer.indexOf(`\n`)) !== -1) {
-        const chunk = parseLine(buffer.slice(0, idx))
-        buffer = buffer.slice(idx + 1)
+    // Handle any remaining bytes from the decoder
+    const remaining = decoder.decode()
+    if (remaining) {
+      buffer += remaining
+    }
 
-        if (chunk) {
-          pendingChunks.push(chunk)
-
-          tryFlush()
-
-          if (writeInProgress && pendingChunks.length >= MAX_PENDING_CHUNKS) {
-            // Apply backpressure
-            await writeInProgress
-          }
-        }
+    // Wait for all writes to complete (flush may trigger additional writes in finally callback)
+    while (writeInProgress !== null || buffer.length > 0) {
+      if (writeInProgress !== null) {
+        await writeInProgress
+      }
+      if (buffer.length > 0 && writeInProgress === null) {
+        flush()
       }
     }
 
-    // Flush remaining buffer
-    if (buffer.trim()) {
-      const chunk = parseLine(buffer)
-
-      if (chunk) pendingChunks.push(chunk)
-    }
-
-    // Wait for all writes to complete
-    if (writeInProgress) await writeInProgress
-
-    if (pendingChunks.length > 0) {
-      await insertChunks(data.sessionId, data.requestId, pendingChunks)
-    }
-
-    // Wait again in case tryFlush was triggered by the finally callback
-    if (writeInProgress) await writeInProgress
-
-    // Stream completed successfully - write done marker
-    await insertControlMessage(data.sessionId, data.requestId, `done`)
+    // Write control message with final data row ID
+    await insertControlMessage(sessionId, requestId, `done`, lastDataRowId, {
+      finishReason: `complete`,
+    })
   } catch (error) {
-    // Stream failed - write error marker
     const message = error instanceof Error ? error.message : `Unknown error`
-    await insertControlMessage(data.sessionId, data.requestId, `error`, message)
+    await insertControlMessage(sessionId, requestId, `error`, lastDataRowId, {
+      message,
+    })
     throw error
   }
 }
 
-// Handle API requests by intercepting, returning immediately and then
-// continuing to write the response messages to the DB.
+/**
+ * Handle API requests by proxying to the upstream API and streaming the response to the database.
+ *
+ * This handler is protocol-agnostic:
+ * - Streams the request body directly to the upstream API without parsing
+ * - Forwards headers as-is (client sets Content-Type)
+ * - Relays raw response bytes to the database
+ *
+ * Request format:
+ * - Path: /api/:sessionId/:requestId
+ * - Headers: X-Proxy-Url, X-Proxy-Method, plus any headers to forward
+ * - Body: raw stream passed through to upstream
+ */
 export async function handleApiRequest(
   data: APIRequestData
 ): Promise<APIResponse | ErrorResponse> {
-  if (data.body.messages && Array.isArray(data.body.messages)) {
-    await persistNewUserMessages(data.body.messages)
-  }
+  const { params, proxyHeaders, forwardHeaders, body } = data
+  const { sessionId, requestId } = params
 
-  const response = await fetch(data.url, {
-    method: data.method,
-    headers: {
-      'Content-Type': `application/json`,
-      ...data.headers,
-    },
-    body: JSON.stringify(data.body),
+  const url = proxyHeaders[`x-proxy-url`]
+  const method = proxyHeaders[`x-proxy-method`]
+
+  // Stream body directly to upstream API
+  const response = await fetch(url, {
+    method,
+    body,
+    headers: forwardHeaders,
+    duplex: `half`
   })
 
   if (!response.ok) {
@@ -171,24 +142,17 @@ export async function handleApiRequest(
   }
 
   if (response.body) {
-    // If this fails silently, we have a problem. We need to write processing
-    // errors to the DB and have the client also consume a stream to get them.
-
-    processApiResponse(data, response.body).catch((error) => {
-      console.error(
-        `processApiResponse error`,
-        {
-          sessionId: data.sessionId,
-          requestId: data.requestId,
-        },
-        error
-      )
+    // Process the response stream in the background
+    processApiResponse(sessionId, requestId, response.body).catch((error) => {
+      console.error(`processApiResponse error`, { sessionId, requestId }, error)
     })
   }
 
   return {
-    sessionId: data.sessionId,
-    requestId: data.requestId,
-    streamUrl: `${proxyUrl}/stream`,
+    sessionId,
+    requestId,
+    streamUrl: `${proxyUrl}/stream/data`,
+    controlUrl: `${proxyUrl}/stream/control`,
+    contentType: response.headers.get(`Content-Type`) ?? undefined,
   }
 }

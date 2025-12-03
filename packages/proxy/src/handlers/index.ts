@@ -1,2 +1,2 @@
 export { handleApiRequest } from './api'
-export { handleStreamRequest } from './stream'
+export { handleDataStreamRequest, handleControlStreamRequest } from './stream'

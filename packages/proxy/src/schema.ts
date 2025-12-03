@@ -1,16 +1,20 @@
 import { z } from 'zod'
 import { ELECTRIC_PROTOCOL_QUERY_PARAMS } from '@electric-sql/client'
 
-export const apiRequestSchema = z.object({
+export const apiRequestParamsSchema = z.object({
   sessionId: z.string().uuid(),
   requestId: z.string().uuid(),
-  url: z.string().url(),
-  method: z
+})
+
+export const apiRequestHeadersSchema = z.object({
+  'x-proxy-url': z.string().url(),
+  'x-proxy-method': z
     .enum([`DELETE`, `GET`, `HEAD`, `PATCH`, `POST`, `PUT`])
     .default(`POST`),
-  headers: z.record(z.string()).optional(),
-  body: z.any().optional(),
 })
+
+export type APIRequestParams = z.infer<typeof apiRequestParamsSchema>
+export type APIRequestHeaders = z.infer<typeof apiRequestHeadersSchema>
 
 export const streamRequestSchema = z.object({
   sessionId: z.string().uuid(),
@@ -23,5 +27,4 @@ export const streamRequestSchema = z.object({
   ),
 })
 
-export type APIRequestData = z.infer<typeof apiRequestSchema>
 export type StreamRequestData = z.infer<typeof streamRequestSchema>
