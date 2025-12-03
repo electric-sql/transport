@@ -14,13 +14,13 @@
     "@electric-sql/ai-transport": "workspace:*",
     "ai": "6.0.0-beta.127",
     "next": "^15.5.4",
-    "react": "^18",
-    "react-dom": "^18"
+    "react": "^19",
+    "react-dom": "^19"
   },
   "devDependencies": {
     "@types/node": "20.17.24",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "autoprefixer": "^10.4.14",
     "eslint": "^9",
     "eslint-config-next": "^15.5.4",

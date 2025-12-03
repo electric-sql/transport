@@ -11,27 +11,143 @@ import { durableTransport } from '@electric-sql/tanstack-ai-transport'
 import type { UIMessage } from '@tanstack/ai-client'
 import type { StreamChunk } from '@tanstack/ai'
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
 const proxyUrl =
   typeof window !== `undefined`
     ? (window as unknown as { ENV?: { PROXY_URL?: string } }).ENV?.PROXY_URL ??
       `http://localhost:4000/api`
     : `http://localhost:4000/api`
 
-// Create the durable transport outside the component
-// This ensures stable references across renders
-const { durableSession, initialMessages, clearSession } =
+const { durableSession, useDurability, clearSession } =
   durableTransport(`tanstack-demo`, {
     proxyUrl,
     api: `/api/chat`,
   })
 
-// ============================================================================
-// Components
-// ============================================================================
+function ChatPage() {
+  const [chunks, setChunks] = useState<StreamChunk[]>([])
+  const [input, setInput] = useState(``)
+  const [isConnected, setIsConnected] = useState(true)
+
+  const { messages, sendMessage, isLoading, stop, setMessages, clear } =
+    useChat({
+      ...durableSession, // Spreads: id, connection, onFinish
+      onChunk: (chunk) => {
+        setChunks((prev) => [...prev, chunk])
+        // Consider connected when we receive chunks
+        setIsConnected(true)
+      },
+      onError: () => {
+        setIsConnected(false)
+      },
+    })
+
+  // Handle message persistence and active generation resumption
+  const { isResuming } = useDurability(messages, setMessages, setChunks, {
+    onError: (error) => {
+      console.error(`Failed to resume generation:`, error)
+      setIsConnected(false)
+    },
+  })
+
+  const handleSubmit = async () => {
+    if (!input.trim() || isLoading) return
+
+    const message = input.trim()
+    setInput(``)
+    await sendMessage(message)
+  }
+
+  const handleClear = () => {
+    clear()
+    clearSession()
+    setChunks([])
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-73px)]">
+      {/* Chat Panel */}
+      <div className="flex-1 flex flex-col border-r border-gray-800">
+        {/* Status Bar */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900/50">
+          <ConnectionStatus isConnected={isConnected} />
+          <button
+            onClick={handleClear}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+          >
+            <Trash2 className="w-3 h-3" />
+            Clear Chat
+          </button>
+        </div>
+
+        {/* Messages */}
+        <Messages messages={messages} />
+
+        {/* Input Area */}
+        <div className="border-t border-gray-800 p-4">
+          {(isLoading || isResuming) && (
+            <div className="flex justify-center mb-3">
+              {isResuming ? (
+                <div className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Resuming stream...
+                </div>
+              ) : (
+                <button
+                  onClick={stop}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  Stop
+                </button>
+              )}
+            </div>
+          )}
+          <div className="relative">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type a message... (Shift+Enter for new line)"
+              className="w-full rounded-lg border border-gray-700 bg-gray-800/50 px-4 py-3 pr-12 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent resize-none"
+              rows={1}
+              disabled={isLoading || isResuming}
+              onKeyDown={(e) => {
+                if (e.key === `Enter` && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSubmit()
+                }
+              }}
+              onInput={(e) => {
+                const target = e.target as HTMLTextAreaElement
+                target.style.height = `auto`
+                target.style.height = `${Math.min(target.scrollHeight, 200)}px`
+              }}
+            />
+            <button
+              onClick={handleSubmit}
+              disabled={!input.trim() || isLoading || isResuming}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-orange-500 hover:text-orange-400 disabled:text-gray-600 transition-colors"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Debug Panel */}
+      <div className="w-80 bg-gray-950 flex flex-col">
+        <div className="px-4 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-semibold text-white">Stream Debug</h2>
+          <p className="text-xs text-gray-500 mt-1">
+            Raw chunks from the AI stream
+          </p>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <DebugPanel chunks={chunks} onClearChunks={() => setChunks([])} />
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function ConnectionStatus({ isConnected }: { isConnected: boolean }) {
   return (
@@ -207,133 +323,14 @@ function DebugPanel({
               {chunk.type}
             </span>
             <span className="text-gray-500 ml-2">
-              {chunk.type === `content` && `content` in chunk
-                ? (chunk.content?.slice(0, 50) ?? ``) +
-                  ((chunk.content?.length ?? 0) > 50 ? `...` : ``)
+              {chunk.type === `content` && `delta` in chunk
+                ? (chunk.delta?.slice(0, 50) ?? ``)
                 : chunk.type === `done` && `finishReason` in chunk
                   ? chunk.finishReason
                   : ``}
             </span>
           </div>
         ))}
-      </div>
-    </div>
-  )
-}
-
-function ChatPage() {
-  const [chunks, setChunks] = useState<StreamChunk[]>([])
-  const [input, setInput] = useState(``)
-  const [isConnected, setIsConnected] = useState(true)
-
-  const { messages, sendMessage, isLoading, stop, setMessages, clear } =
-    useChat({
-      ...durableSession, // Spreads: id, connection, onFinish
-      onChunk: (chunk) => {
-        setChunks((prev) => [...prev, chunk])
-        // Consider connected when we receive chunks
-        setIsConnected(true)
-      },
-      onError: () => {
-        setIsConnected(false)
-      },
-    })
-
-  // Load persisted messages after hydration
-  useEffect(() => {
-    if (initialMessages.length > 0) {
-      setMessages(initialMessages)
-    }
-  }, [setMessages])
-
-  const handleSubmit = async () => {
-    if (!input.trim() || isLoading) return
-
-    const message = input.trim()
-    setInput(``)
-    await sendMessage(message)
-  }
-
-  const handleClear = () => {
-    clear()
-    clearSession()
-    setChunks([])
-  }
-
-  return (
-    <div className="flex h-[calc(100vh-73px)]">
-      {/* Chat Panel */}
-      <div className="flex-1 flex flex-col border-r border-gray-800">
-        {/* Status Bar */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900/50">
-          <ConnectionStatus isConnected={isConnected} />
-          <button
-            onClick={handleClear}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-          >
-            <Trash2 className="w-3 h-3" />
-            Clear Chat
-          </button>
-        </div>
-
-        {/* Messages */}
-        <Messages messages={messages} />
-
-        {/* Input Area */}
-        <div className="border-t border-gray-800 p-4">
-          {isLoading && (
-            <div className="flex justify-center mb-3">
-              <button
-                onClick={stop}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
-              >
-                <Square className="w-4 h-4 fill-current" />
-                Stop
-              </button>
-            </div>
-          )}
-          <div className="relative">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message... (Shift+Enter for new line)"
-              className="w-full rounded-lg border border-gray-700 bg-gray-800/50 px-4 py-3 pr-12 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent resize-none"
-              rows={1}
-              disabled={isLoading}
-              onKeyDown={(e) => {
-                if (e.key === `Enter` && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSubmit()
-                }
-              }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement
-                target.style.height = `auto`
-                target.style.height = `${Math.min(target.scrollHeight, 200)}px`
-              }}
-            />
-            <button
-              onClick={handleSubmit}
-              disabled={!input.trim() || isLoading}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-orange-500 hover:text-orange-400 disabled:text-gray-600 transition-colors"
-            >
-              <Send className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Debug Panel */}
-      <div className="w-80 bg-gray-950 flex flex-col">
-        <div className="px-4 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-white">Stream Debug</h2>
-          <p className="text-xs text-gray-500 mt-1">
-            Raw chunks from the AI stream
-          </p>
-        </div>
-        <div className="flex-1 overflow-hidden">
-          <DebugPanel chunks={chunks} onClearChunks={() => setChunks([])} />
-        </div>
       </div>
     </div>
   )

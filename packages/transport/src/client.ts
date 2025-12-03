@@ -101,7 +101,8 @@ export function createFetchClient(options: FetchClientOptions): FetchFn {
       `X-Resume-Active-Generation`
     )
     if (shouldResumeActiveGeneration) {
-      const replayFromStart = request.headers.get(`X-Replay-From-Start`) === `true`
+      const replayFromStart =
+        request.headers.get(`X-Replay-From-Start`) === `true`
       const ttlHeader = request.headers.get(`X-Active-Generation-TTL`)
       const ttlMs = ttlHeader !== null ? parseInt(ttlHeader, 10) : undefined
 
@@ -121,7 +122,7 @@ export function createFetchClient(options: FetchClientOptions): FetchFn {
         targetUrl: request.url,
         method: request.method,
         headers: extractForwardHeaders(request.headers),
-        body: body || null
+        body: body || null,
       }
 
       try {

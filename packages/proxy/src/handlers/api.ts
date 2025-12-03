@@ -131,7 +131,7 @@ export async function handleApiRequest(
     method,
     body,
     headers: forwardHeaders,
-    duplex: `half`
+    duplex: `half`,
   })
 
   if (!response.ok) {
@@ -143,9 +143,8 @@ export async function handleApiRequest(
 
   if (response.body) {
     // Process the response stream in the background
-    processApiResponse(sessionId, requestId, response.body).catch((error) => {
-      console.error(`processApiResponse error`, { sessionId, requestId }, error)
-    })
+    // Errors are handled inside processApiResponse (writes error to control stream)
+    processApiResponse(sessionId, requestId, response.body).catch(() => {})
   }
 
   return {

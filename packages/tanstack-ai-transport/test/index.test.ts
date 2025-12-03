@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { durableTransport } from '../src/index'
 import * as tanstackAiClient from '@tanstack/ai-client'
+import type { UIMessage } from '@tanstack/ai-client'
 import * as transport from '@electric-sql/transport'
 
 // Mock dependencies
@@ -137,7 +138,11 @@ describe(`durableTransport`, () => {
     })
 
     it(`respects messages TTL option`, () => {
-      durableTransport(sessionId, { proxyUrl }, { messages: { ttlMs: 3600000 } })
+      durableTransport(
+        sessionId,
+        { proxyUrl },
+        { messages: { ttlMs: 3600000 } }
+      )
 
       expect(transport.getPersistedMessages).toHaveBeenCalledWith(
         sessionId,
@@ -149,12 +154,14 @@ describe(`durableTransport`, () => {
   describe(`onFinish callback`, () => {
     it(`persists message and clears active generation`, () => {
       const existingMessages = [{ id: `1`, role: `user`, parts: [] }]
-      vi.mocked(transport.getPersistedMessages).mockReturnValue(existingMessages)
+      vi.mocked(transport.getPersistedMessages).mockReturnValue(
+        existingMessages
+      )
 
       const result = durableTransport(sessionId, { proxyUrl })
       const newMessage = { id: `2`, role: `assistant`, parts: [] }
 
-      result.durableSession.onFinish(newMessage as any)
+      result.durableSession.onFinish(newMessage as unknown as UIMessage)
 
       expect(transport.setPersistedMessages).toHaveBeenCalledWith(sessionId, [
         ...existingMessages,
@@ -172,7 +179,7 @@ describe(`durableTransport`, () => {
       )
       const message = { id: `1`, role: `assistant`, parts: [] }
 
-      result.durableSession.onFinish(message as any)
+      result.durableSession.onFinish(message as unknown as UIMessage)
 
       expect(userOnFinish).toHaveBeenCalledWith(message)
     })
