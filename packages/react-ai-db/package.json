@@ -1,0 +1,41 @@
+{
+  "name": "@electric-sql/react-ai-db",
+  "version": "0.1.0",
+  "description": "React bindings for durable chat client backed by TanStack DB and Durable Streams.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "author": "ElectricSQL",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@electric-sql/ai-db": "workspace:*",
+    "@tanstack/react-db": "workspace:*"
+  },
+  "devDependencies": {
+    "@tanstack/ai": "^0.0.1",
+    "@types/node": "^24.10.0",
+    "@types/react": "^18.3.0",
+    "react": "^18.3.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "@tanstack/ai": "*",
+    "react": "^18.0.0 || ^19.0.0"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "@electric-sql/ai-db",
+  "version": "0.1.0",
+  "description": "Framework-agnostic durable chat client backed by TanStack DB and Durable Streams.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "author": "ElectricSQL",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@tanstack/db": "workspace:*",
+    "@tanstack/durable-stream-db-collection": "workspace:*",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@tanstack/ai": "^0.0.1",
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
+  },
+  "peerDependencies": {
+    "@tanstack/ai": "*"
+  }
+}
