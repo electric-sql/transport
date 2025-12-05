@@ -1,7 +1,7 @@
 import './globals.css'
 
 export const metadata = {
-  title: `Durable - AI SDK Example`,
+  title: `Vercel AI SDK + Electric Durable Transport`,
   description: `Electric durable streams transport + Vercel AI SDK + Next.js + OpenAI streaming chat example.`,
 }
 
