@@ -36,9 +36,7 @@ import type {
  * )
  * ```
  */
-export function durableSessionStreamOptions(
-  config: DurableSessionStreamConfig
-): CollectionConfig<StreamRowWithOffset> {
+export function durableSessionStreamOptions(config: DurableSessionStreamConfig) {
   const { sessionId, baseUrl, initialOffset, headers, schema } = config
 
   return durableStreamCollectionOptions<StreamRow>({
@@ -57,7 +55,7 @@ export function durableSessionStreamOptions(
     id: `session-stream:${sessionId}`,
 
     // Optional schema for validation
-    schema,
+    schema: schema as never,
 
     // Initial offset for resumption
     initialOffset,

@@ -111,7 +111,7 @@ export function useDurableChat<
   const { autoConnect = true, ...clientOptions } = options
 
   // Track messages in React state for reactivity
-  const [messages, setMessages] = useState<UIMessage<TTools>[]>(
+  const [messages, setMessages] = useState<UIMessage[]>(
     options.initialMessages ?? []
   )
   const [isLoading, setIsLoading] = useState(false)
@@ -130,7 +130,7 @@ export function useDurableChat<
       ...clientOptions,
       // Override callbacks to update React state
       onMessagesChange: (msgs) => {
-        setMessages(msgs as UIMessage<TTools>[])
+        setMessages(msgs as UIMessage[])
         clientOptions.onMessagesChange?.(msgs)
       },
       onError: (err) => {
@@ -155,7 +155,7 @@ export function useDurableChat<
         .then(() => {
           setConnectionStatus('connected')
           // Sync initial messages from client
-          setMessages(client.messages as UIMessage<TTools>[])
+          setMessages(client.messages as UIMessage[])
         })
         .catch((err) => {
           setConnectionStatus('error')
@@ -170,7 +170,7 @@ export function useDurableChat<
 
     // Subscribe to messages collection for message updates
     const messagesUnsubscribe = client.collections.messages.subscribeChanges(() => {
-      setMessages(client.messages as UIMessage<TTools>[])
+      setMessages(client.messages as UIMessage[])
     })
 
     // Subscribe to session meta for connection status
@@ -230,7 +230,7 @@ export function useDurableChat<
   }, [client])
 
   const setMessagesManually = useCallback(
-    (msgs: UIMessage<TTools>[]) => {
+    (msgs: UIMessage[]) => {
       setMessages(msgs)
       client.setMessagesManually(msgs)
     },
@@ -277,7 +277,7 @@ export function useDurableChat<
     try {
       await client.connect()
       setConnectionStatus('connected')
-      setMessages(client.messages as UIMessage<TTools>[])
+      setMessages(client.messages as UIMessage[])
     } catch (err) {
       setConnectionStatus('error')
       setError(err instanceof Error ? err : new Error(String(err)))

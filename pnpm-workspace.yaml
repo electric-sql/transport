@@ -1,3 +1,6 @@
 packages:
   - 'demos/*'
   - 'packages/*'
+  - '../../TanStack/ai/packages/typescript/*'
+  - '../../TanStack/db/packages/*'
+  - '../../durable-streams/durable-streams/packages/*'

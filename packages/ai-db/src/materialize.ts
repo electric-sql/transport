@@ -6,9 +6,15 @@
  */
 
 import { StreamProcessor } from '@tanstack/ai'
-import type { StreamChunk, UIMessage } from '@tanstack/ai'
 import type {
-  StreamRow,
+  StreamChunk,
+  ContentStreamChunk,
+  ToolCallStreamChunk,
+  ToolResultStreamChunk,
+  DoneStreamChunk,
+  ApprovalRequestedStreamChunk,
+} from '@tanstack/ai'
+import type {
   StreamRowWithOffset,
   MessageRow,
   MessageRole,
@@ -19,6 +25,30 @@ import type {
   ApprovalStatus,
   ActiveGenerationRow,
 } from './types'
+
+// ============================================================================
+// Type Guards for StreamChunk
+// ============================================================================
+
+function isContentChunk(chunk: StreamChunk): chunk is ContentStreamChunk {
+  return chunk.type === 'content'
+}
+
+function isToolCallChunk(chunk: StreamChunk): chunk is ToolCallStreamChunk {
+  return chunk.type === 'tool_call'
+}
+
+function isToolResultChunk(chunk: StreamChunk): chunk is ToolResultStreamChunk {
+  return chunk.type === 'tool_result'
+}
+
+function isDoneChunk(chunk: StreamChunk): chunk is DoneStreamChunk {
+  return chunk.type === 'done'
+}
+
+function isApprovalRequestedChunk(chunk: StreamChunk): chunk is ApprovalRequestedStreamChunk {
+  return chunk.type === 'approval-requested'
+}
 
 // ============================================================================
 // Message Materialization
@@ -44,9 +74,10 @@ export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
   // Create a StreamProcessor instance for this message
   const processor = new StreamProcessor()
 
-  // Determine role from first chunk
+  // Determine role from first chunk or actor type
   const firstChunk = parseChunk(first.chunk)
-  const isUserMessage = first.actorType === 'user' || firstChunk?.role === 'user'
+  // ContentStreamChunk.role is 'assistant' | undefined, so check actorType for user messages
+  const isUserMessage = first.actorType === 'user'
 
   if (isUserMessage) {
     processor.startUserMessage()
@@ -62,7 +93,7 @@ export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
     }
   }
 
-  // Check if message is complete (has 'done' or 'message-end' chunk)
+  // Check if message is complete (has 'done' chunk)
   const state = processor.getState()
   const isComplete = state.done || hasFinishChunk(sorted)
 
@@ -75,13 +106,12 @@ export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
   const messages = processor.getMessages()
   const uiMessage = messages[messages.length - 1]
 
-  // Determine role
+  // Determine role - only ContentStreamChunk has role property
   let role: MessageRole = 'assistant'
   if (isUserMessage) {
     role = 'user'
-  } else if (firstChunk?.role === 'system') {
-    role = 'system'
   }
+  // Note: 'system' role would typically be set differently, not via content chunks
 
   return {
     id: first.messageId,
@@ -121,12 +151,8 @@ function hasFinishChunk(rows: StreamRowWithOffset[]): boolean {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    // Check for various finish indicators
-    if (
-      chunk.type === 'message-end' ||
-      chunk.type === 'done' ||
-      (chunk.type as string) === 'finish'
-    ) {
+    // Check for done chunk
+    if (isDoneChunk(chunk)) {
       return true
     }
   }
@@ -150,28 +176,26 @@ export function extractToolCalls(rows: StreamRowWithOffset[]): ToolCallRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    // Handle tool-call chunks
-    if (chunk.type === 'tool-call' || chunk.type === 'tool-call-delta') {
-      const toolCallId = (chunk as { toolCallId?: string }).toolCallId
+    // Handle tool_call chunks
+    if (isToolCallChunk(chunk)) {
+      const toolCallId = chunk.toolCall.id
       if (!toolCallId) continue
 
       const existing = toolCallMap.get(toolCallId)
 
       if (existing) {
-        // Update existing tool call
-        if ((chunk as { argumentsDelta?: string }).argumentsDelta) {
-          existing.arguments += (chunk as { argumentsDelta: string }).argumentsDelta
-        }
-        if ((chunk as { name?: string }).name) {
-          existing.name = (chunk as { name: string }).name
+        // Update existing tool call - accumulate arguments
+        existing.arguments += chunk.toolCall.function.arguments
+        if (chunk.toolCall.function.name) {
+          existing.name = chunk.toolCall.function.name
         }
       } else {
         // Create new tool call
         toolCallMap.set(toolCallId, {
           id: toolCallId,
           messageId: row.messageId,
-          name: (chunk as { name?: string }).name ?? '',
-          arguments: (chunk as { arguments?: string }).arguments ?? '',
+          name: chunk.toolCall.function.name ?? '',
+          arguments: chunk.toolCall.function.arguments ?? '',
           input: null,
           state: 'pending' as ToolCallState,
           actorId: row.actorId,
@@ -180,20 +204,29 @@ export function extractToolCalls(rows: StreamRowWithOffset[]): ToolCallRow[] {
       }
     }
 
-    // Handle tool-call-end chunks
-    if (chunk.type === 'tool-call-end') {
-      const toolCallId = (chunk as { toolCallId?: string }).toolCallId
-      if (!toolCallId) continue
-
-      const toolCall = toolCallMap.get(toolCallId)
-      if (toolCall) {
-        // Try to parse arguments as input
-        try {
-          toolCall.input = JSON.parse(toolCall.arguments)
-        } catch {
-          // Keep input as null if parsing fails
+    // Check for tool-input-available to mark as executing
+    if (chunk.type === 'tool-input-available') {
+      const toolInputChunk = chunk as {
+        toolCallId?: string
+        input?: unknown
+      }
+      if (toolInputChunk.toolCallId) {
+        const toolCall = toolCallMap.get(toolInputChunk.toolCallId)
+        if (toolCall) {
+          toolCall.input = toolInputChunk.input ?? null
+          toolCall.state = 'executing'
         }
-        toolCall.state = 'executing'
+      }
+    }
+  }
+
+  // Try to parse arguments as input for any tool calls that don't have input yet
+  for (const toolCall of toolCallMap.values()) {
+    if (toolCall.input === null && toolCall.arguments) {
+      try {
+        toolCall.input = JSON.parse(toolCall.arguments)
+      } catch {
+        // Keep input as null if parsing fails
       }
     }
   }
@@ -218,24 +251,16 @@ export function extractToolResults(rows: StreamRowWithOffset[]): ToolResultRow[]
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    if (chunk.type === 'tool-result') {
-      const toolResultChunk = chunk as {
-        toolCallId?: string
-        output?: unknown
-        error?: string
-      }
-
-      if (toolResultChunk.toolCallId) {
-        results.push({
-          id: `${row.messageId}:${toolResultChunk.toolCallId}`,
-          toolCallId: toolResultChunk.toolCallId,
-          messageId: row.messageId,
-          output: toolResultChunk.output ?? null,
-          error: toolResultChunk.error ?? null,
-          actorId: row.actorId,
-          createdAt: new Date(row.createdAt),
-        })
-      }
+    if (isToolResultChunk(chunk)) {
+      results.push({
+        id: `${row.messageId}:${chunk.toolCallId}`,
+        toolCallId: chunk.toolCallId,
+        messageId: row.messageId,
+        output: chunk.content ?? null,
+        error: null,
+        actorId: row.actorId,
+        createdAt: new Date(row.createdAt),
+      })
     }
   }
 
@@ -259,17 +284,13 @@ export function extractApprovals(rows: StreamRowWithOffset[]): ApprovalRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    // Handle approval-request chunks
-    if (chunk.type === 'approval-request') {
-      const approvalChunk = chunk as {
-        approvalId?: string
-        toolCallId?: string
-      }
-
-      if (approvalChunk.approvalId) {
-        approvalMap.set(approvalChunk.approvalId, {
-          id: approvalChunk.approvalId,
-          toolCallId: approvalChunk.toolCallId ?? '',
+    // Handle approval-requested chunks
+    if (isApprovalRequestedChunk(chunk)) {
+      const approvalId = chunk.approval.id
+      if (approvalId) {
+        approvalMap.set(approvalId, {
+          id: approvalId,
+          toolCallId: chunk.toolCallId ?? '',
           messageId: row.messageId,
           status: 'pending' as ApprovalStatus,
           requestedBy: row.actorId,
@@ -280,22 +301,8 @@ export function extractApprovals(rows: StreamRowWithOffset[]): ApprovalRow[] {
       }
     }
 
-    // Handle approval-response chunks
-    if (chunk.type === 'approval-response') {
-      const responseChunk = chunk as {
-        approvalId?: string
-        approved?: boolean
-      }
-
-      if (responseChunk.approvalId) {
-        const approval = approvalMap.get(responseChunk.approvalId)
-        if (approval) {
-          approval.status = responseChunk.approved ? 'approved' : 'denied'
-          approval.respondedBy = row.actorId
-          approval.respondedAt = new Date(row.createdAt)
-        }
-      }
-    }
+    // Note: approval responses would typically come through a separate mechanism
+    // (e.g., a POST to the proxy endpoint), not as stream chunks
   }
 
   return Array.from(approvalMap.values())
@@ -392,15 +399,15 @@ export function materializeAllMessages(rows: StreamRowWithOffset[]): MessageRow[
 // ============================================================================
 
 /**
- * Extract text content from a UIMessage.
+ * Extract text content from a UIMessage or MessageRow.
  *
  * @param message - Message to extract from
  * @returns Combined text content
  */
-export function extractTextContent(message: { parts: Array<{ type: string; text?: string }> }): string {
+export function extractTextContent(message: { parts: Array<{ type: string; text?: string; content?: string }> }): string {
   return message.parts
-    .filter((p) => p.type === 'text' && p.text)
-    .map((p) => p.text!)
+    .filter((p) => p.type === 'text')
+    .map((p) => p.text ?? p.content ?? '')
     .join('')
 }
 

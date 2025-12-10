@@ -1,16 +1,19 @@
 /**
- * Active generations collection - derived livequery.
+ * Active generations collection - derived from messages.
  *
  * Tracks messages that are currently being streamed (have chunks but no finish chunk).
+ * This is derived from the messages collection by filtering for incomplete messages.
+ *
+ * This follows the pattern: derive from materialized data with fn.select
  */
 
-import type {
-  Collection,
-  LiveQueryCollectionConfig,
-  StandardSchemaV1,
-} from '@tanstack/db'
-import type { StreamRowWithOffset, ActiveGenerationRow } from '../types'
-import { groupRowsByMessage, detectActiveGenerations } from '../materialize'
+import { createLiveQueryCollection } from '@tanstack/db'
+import type { Collection } from '@tanstack/db'
+import type { MessageRow, ActiveGenerationRow } from '../types'
+
+// ============================================================================
+// Active Generations Collection
+// ============================================================================
 
 /**
  * Options for creating an active generations collection.
@@ -18,17 +21,28 @@ import { groupRowsByMessage, detectActiveGenerations } from '../materialize'
 export interface ActiveGenerationsCollectionOptions {
   /** Session identifier */
   sessionId: string
-  /** Stream collection to derive from */
-  streamCollection: Collection<StreamRowWithOffset>
-  /** Optional schema for validation */
-  schema?: StandardSchemaV1<ActiveGenerationRow>
+  /** Messages collection to derive from */
+  messagesCollection: Collection<MessageRow>
 }
 
 /**
- * Creates collection config for the active generations collection.
+ * Convert an incomplete message to an active generation row.
+ */
+function messageToActiveGeneration(message: MessageRow): ActiveGenerationRow {
+  return {
+    messageId: message.id,
+    actorId: message.actorId,
+    startedAt: message.createdAt,
+    lastChunkOffset: message.startOffset, // Best we have without tracking each chunk
+    lastChunkAt: message.createdAt,
+  }
+}
+
+/**
+ * Creates the active generations collection from messages.
  *
- * This is a derived livequery collection that detects incomplete messages
- * (messages that have started streaming but haven't received a finish chunk yet).
+ * Filters messages to only include incomplete ones (isComplete === false)
+ * and transforms them into ActiveGenerationRow format.
  *
  * Active generations are useful for:
  * - Showing typing indicators
@@ -37,105 +51,30 @@ export interface ActiveGenerationsCollectionOptions {
  *
  * @example
  * ```typescript
- * import { createActiveGenerationsCollectionOptions } from '@electric-sql/ai-db'
- * import { createCollection } from '@tanstack/db'
+ * const activeGenerations = createActiveGenerationsCollection({
+ *   sessionId: 'my-session',
+ *   messagesCollection,
+ * })
  *
- * const activeGenerationsCollection = createCollection(
- *   createActiveGenerationsCollectionOptions({
- *     sessionId: 'my-session',
- *     streamCollection,
- *   })
- * )
+ * // Check if anything is generating
+ * const isLoading = activeGenerations.size > 0
+ *
+ * // Access active generations directly
+ * for (const gen of activeGenerations.values()) {
+ *   console.log(gen.messageId, gen.actorId, gen.startedAt)
+ * }
  * ```
  */
-export function createActiveGenerationsCollectionOptions(
+export function createActiveGenerationsCollection(
   options: ActiveGenerationsCollectionOptions
-): LiveQueryCollectionConfig<ActiveGenerationRow> {
-  const { sessionId, streamCollection, schema } = options
+): Collection<ActiveGenerationRow> {
+  const { messagesCollection } = options
 
-  return {
-    id: `session-active-generations:${sessionId}`,
-    schema,
-    getKey: (gen) => gen.messageId,
-
-    // Derived via livequery - detects incomplete messages
-    query: (q) =>
-      q
-        .from({ row: streamCollection })
-        .fn.select(({ rows }) => {
-          const allRows = rows as StreamRowWithOffset[]
-          const grouped = groupRowsByMessage(allRows)
-          return detectActiveGenerations(grouped)
-        })
-        // Flatten the array of active generations
-        .fn.flatMap((generations) => generations),
-  }
-}
-
-/**
- * Check if any generation is currently active.
- *
- * @param collection - Active generations collection
- * @returns Whether any message is being generated
- */
-export function hasActiveGeneration(
-  collection: Collection<ActiveGenerationRow>
-): boolean {
-  return collection.size > 0
-}
-
-/**
- * Get the most recent active generation.
- *
- * @param collection - Active generations collection
- * @returns Most recent active generation or undefined
- */
-export function getMostRecentActiveGeneration(
-  collection: Collection<ActiveGenerationRow>
-): ActiveGenerationRow | undefined {
-  let mostRecent: ActiveGenerationRow | undefined
-  let mostRecentTime: Date | undefined
-
-  for (const gen of collection.values()) {
-    if (!mostRecentTime || gen.startedAt > mostRecentTime) {
-      mostRecent = gen
-      mostRecentTime = gen.startedAt
-    }
-  }
-
-  return mostRecent
-}
-
-/**
- * Get active generations for a specific actor.
- *
- * @param collection - Active generations collection
- * @param actorId - Actor identifier
- * @returns Array of active generations for the actor
- */
-export function getActiveGenerationsForActor(
-  collection: Collection<ActiveGenerationRow>,
-  actorId: string
-): ActiveGenerationRow[] {
-  const result: ActiveGenerationRow[] = []
-  for (const gen of collection.values()) {
-    if (gen.actorId === actorId) {
-      result.push(gen)
-    }
-  }
-  return result
-}
-
-/**
- * Check if a specific message is being generated.
- *
- * @param collection - Active generations collection
- * @param messageId - Message identifier
- * @returns Whether the message is being generated
- */
-export function isMessageGenerating(
-  collection: Collection<ActiveGenerationRow>,
-  messageId: string
-): boolean {
-  return collection.has(messageId)
+  // Filter messages for incomplete ones and transform to ActiveGenerationRow
+  return createLiveQueryCollection((q) =>
+    q
+      .from({ message: messagesCollection })
+      .fn.where(({ message }) => !message.isComplete)
+      .fn.select(({ message }) => messageToActiveGeneration(message))
+  )
 }

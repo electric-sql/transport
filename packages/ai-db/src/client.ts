@@ -3,22 +3,18 @@
  *
  * Provides TanStack AI-compatible API backed by Durable Streams
  * with real-time sync and multi-agent support.
+ *
+ * All derived collections contain fully materialized objects.
+ * No helper functions needed to access data.
  */
 
-import { createCollection, createDatabase } from '@tanstack/db'
-import type { Collection, Database } from '@tanstack/db'
-import type { UIMessage, StreamChunk, AnyClientTool } from '@tanstack/ai'
+import { createCollection } from '@tanstack/db'
+import type { UIMessage, AnyClientTool } from '@tanstack/ai'
 import type {
   DurableChatClientOptions,
-  DurableChatCollections,
   StreamRowWithOffset,
   MessageRow,
-  ActiveGenerationRow,
-  ToolCallRow,
-  ToolResultRow,
-  ApprovalRow,
   SessionMetaRow,
-  SessionStatsRow,
   AgentSpec,
   ConnectionStatus,
   ForkOptions,
@@ -29,25 +25,28 @@ import type {
 } from './types'
 import {
   createStreamCollectionOptions,
-  createMessagesCollectionOptions,
-  createToolCallsCollectionOptions,
-  createToolResultsCollectionOptions,
-  createApprovalsCollectionOptions,
-  createActiveGenerationsCollectionOptions,
+  createCollectedMessagesCollection,
+  createMessagesCollection,
+  createToolCallsCollection,
+  createToolResultsCollection,
+  createApprovalsCollection,
+  createActiveGenerationsCollection,
   createSessionMetaCollectionOptions,
-  createSessionStatsCollectionOptions,
+  createSessionParticipantsCollection,
+  createSessionStatsCollection,
   createInitialSessionMeta,
   updateConnectionStatus,
   updateSyncProgress,
-  createUserMessage,
   waitForKey,
-  hasActiveGeneration,
 } from './collections'
 import { extractTextContent } from './materialize'
 
 /**
  * DurableChatClient provides a TanStack AI-compatible chat interface
  * backed by Durable Streams for persistence and real-time sync.
+ *
+ * All derived collections contain fully materialized objects.
+ * Access data directly from collections - no helper functions needed.
  *
  * @example
  * ```typescript
@@ -64,10 +63,14 @@ import { extractTextContent } from './materialize'
  * await client.sendMessage('Hello!')
  * console.log(client.messages)
  *
- * // Or use collections for custom queries
- * const pendingApprovals = client.collections.approvals.filter(
- *   a => a.status === 'pending'
- * )
+ * // Or use collections directly
+ * for (const message of client.collections.messages.values()) {
+ *   console.log(message.id, message.role, message.parts)
+ * }
+ *
+ * // Filter tool calls
+ * const pending = [...client.collections.toolCalls.values()]
+ *   .filter(tc => tc.state === 'pending')
  * ```
  */
 export class DurableChatClient<
@@ -78,8 +81,9 @@ export class DurableChatClient<
   readonly actorType: ActorType
 
   private readonly options: DurableChatClientOptions<TTools>
-  private readonly db: Database
-  private readonly _collections: DurableChatCollections
+  // Collections are typed via inference from createCollections()
+  private readonly _collections: ReturnType<DurableChatClient['createCollections']>['collections']
+  private readonly _collectedMessages: ReturnType<DurableChatClient['createCollections']>['collectedMessages']
   private _isConnected = false
   private _isPaused = false
   private _error: Error | undefined
@@ -95,11 +99,10 @@ export class DurableChatClient<
     this.actorId = options.actorId ?? crypto.randomUUID()
     this.actorType = options.actorType ?? 'user'
 
-    // Create database
-    this.db = createDatabase()
-
-    // Create collections
-    this._collections = this.createCollections()
+    // Create collections pipeline
+    const { collections, collectedMessages } = this.createCollections()
+    this._collections = collections
+    this._collectedMessages = collectedMessages
 
     // Initialize session metadata
     this._collections.sessionMeta.insert(
@@ -111,12 +114,11 @@ export class DurableChatClient<
   // Collection Setup
   // ═══════════════════════════════════════════════════════════════════════
 
-  private createCollections(): DurableChatCollections {
+  private createCollections() {
     const baseUrl = this.options.proxyUrl
 
     // Create root stream collection (read-only, synced from Durable Streams)
     const stream = createCollection(
-      this.db,
       createStreamCollectionOptions({
         sessionId: this.sessionId,
         baseUrl,
@@ -124,81 +126,74 @@ export class DurableChatClient<
       })
     )
 
-    // Create derived messages collection (with optimistic mutations)
-    const messages = createCollection(
-      this.db,
-      createMessagesCollectionOptions({
-        sessionId: this.sessionId,
-        proxyUrl: baseUrl,
-        actorId: this.actorId,
-        actorType: this.actorType,
-        streamCollection: stream,
-      })
-    )
+    // Stage 1: Create collected messages (intermediate - groups by messageId)
+    const collectedMessages = createCollectedMessagesCollection({
+      sessionId: this.sessionId,
+      streamCollection: stream,
+    })
 
-    // Create derived tool calls collection
-    const toolCalls = createCollection(
-      this.db,
-      createToolCallsCollectionOptions({
-        sessionId: this.sessionId,
-        streamCollection: stream,
-      })
-    )
+    // Stage 2: Create materialized messages collection
+    const messages = createMessagesCollection({
+      sessionId: this.sessionId,
+      collectedMessagesCollection: collectedMessages,
+    })
 
-    // Create derived tool results collection
-    const toolResults = createCollection(
-      this.db,
-      createToolResultsCollectionOptions({
-        sessionId: this.sessionId,
-        streamCollection: stream,
-      })
-    )
+    // Derive tool calls from collected messages
+    const toolCalls = createToolCallsCollection({
+      sessionId: this.sessionId,
+      collectedMessagesCollection: collectedMessages,
+    })
 
-    // Create derived approvals collection
-    const approvals = createCollection(
-      this.db,
-      createApprovalsCollectionOptions({
-        sessionId: this.sessionId,
-        streamCollection: stream,
-      })
-    )
+    // Derive tool results from collected messages
+    const toolResults = createToolResultsCollection({
+      sessionId: this.sessionId,
+      collectedMessagesCollection: collectedMessages,
+    })
 
-    // Create derived active generations collection
-    const activeGenerations = createCollection(
-      this.db,
-      createActiveGenerationsCollectionOptions({
-        sessionId: this.sessionId,
-        streamCollection: stream,
-      })
-    )
+    // Derive approvals from collected messages
+    const approvals = createApprovalsCollection({
+      sessionId: this.sessionId,
+      collectedMessagesCollection: collectedMessages,
+    })
 
-    // Create session metadata collection
+    // Derive active generations from messages
+    const activeGenerations = createActiveGenerationsCollection({
+      sessionId: this.sessionId,
+      messagesCollection: messages,
+    })
+
+    // Create session metadata collection (local state)
     const sessionMeta = createCollection(
-      this.db,
       createSessionMetaCollectionOptions({
         sessionId: this.sessionId,
-        streamCollection: stream,
       })
     )
 
-    // Create session statistics collection
-    const sessionStats = createCollection(
-      this.db,
-      createSessionStatsCollectionOptions({
-        sessionId: this.sessionId,
-        streamCollection: stream,
-      })
-    )
+    // Create session participants collection (derived from stream)
+    const sessionParticipants = createSessionParticipantsCollection({
+      sessionId: this.sessionId,
+      streamCollection: stream,
+    })
+
+    // Create session statistics collection (derived from stream)
+    const sessionStats = createSessionStatsCollection({
+      sessionId: this.sessionId,
+      streamCollection: stream,
+    })
 
     return {
-      stream,
-      messages,
-      toolCalls,
-      toolResults,
-      approvals,
-      activeGenerations,
-      sessionMeta,
-      sessionStats,
+      collections: {
+        stream,
+        messages,
+        toolCalls,
+        toolResults,
+        approvals,
+        activeGenerations,
+        sessionParticipants,
+        sessionMeta,
+        sessionStats,
+      },
+      collectedMessages,
     }
   }
 
@@ -208,20 +203,21 @@ export class DurableChatClient<
 
   /**
    * Get all messages as UIMessage array.
+   * Messages are accessed directly from the materialized collection.
    */
-  get messages(): UIMessage<TTools>[] {
-    const messageRows = Array.from(this._collections.messages.values())
-    // Sort by startOffset for chronological order
-    messageRows.sort((a, b) => a.startOffset.localeCompare(b.startOffset))
-
-    return messageRows.map((row) => this.messageRowToUIMessage(row))
+  get messages(): UIMessage[] {
+    // Convert MessageRow to UIMessage
+    return [...this._collections.messages.values()].map((row) =>
+      this.messageRowToUIMessage(row)
+    )
   }
 
   /**
    * Check if any generation is currently active.
+   * Uses the activeGenerations collection size directly.
    */
   get isLoading(): boolean {
-    return hasActiveGeneration(this._collections.activeGenerations)
+    return this._collections.activeGenerations.size > 0
   }
 
   /**
@@ -237,11 +233,32 @@ export class DurableChatClient<
    * @param content - Text content to send
    */
   async sendMessage(content: string): Promise<void> {
-    const message = createUserMessage(content, this.actorId, this.actorType)
+    const messageId = crypto.randomUUID()
 
     try {
-      // This triggers optimistic insert → onInsert → POST → await sync
-      await this._collections.messages.insert(message)
+      // Post the message to the proxy, which will write to the durable stream
+      const response = await fetch(
+        `${this.options.proxyUrl}/v1/sessions/${this.sessionId}/messages`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messageId,
+            content,
+            role: 'user',
+            actorId: this.actorId,
+            actorType: this.actorType,
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Failed to send message: ${response.status} ${errorText}`)
+      }
+
+      // Wait for sync - the message will appear in the messages collection
+      await waitForKey(this._collections.messages, messageId)
 
       // Notify callback
       this.options.onMessagesChange?.(this.messages)
@@ -427,7 +444,7 @@ export class DurableChatClient<
    *
    * @param messages - Messages to set
    */
-  setMessagesManually(messages: UIMessage<TTools>[]): void {
+  setMessagesManually(messages: UIMessage[]): void {
     // This is primarily for SSR hydration or testing
     // In production, messages should come from the durable stream
     this.options.onMessagesChange?.(messages)
@@ -439,8 +456,9 @@ export class DurableChatClient<
 
   /**
    * Get all collections for custom queries.
+   * All collections contain fully materialized objects.
    */
-  get collections(): DurableChatCollections {
+  get collections() {
     return this._collections
   }
 
@@ -635,13 +653,13 @@ export class DurableChatClient<
   /**
    * Convert MessageRow to UIMessage.
    */
-  private messageRowToUIMessage(row: MessageRow): UIMessage<TTools> {
+  private messageRowToUIMessage(row: MessageRow): UIMessage {
     return {
       id: row.id,
       role: row.role as 'user' | 'assistant',
       parts: row.parts,
       createdAt: row.createdAt,
-    } as UIMessage<TTools>
+    }
   }
 
   /**
@@ -653,7 +671,9 @@ export class DurableChatClient<
     const current = this._collections.sessionMeta.get(this.sessionId)
     if (current) {
       const updated = updater(current)
-      this._collections.sessionMeta.update(this.sessionId, updated)
+      this._collections.sessionMeta.update(this.sessionId, (draft) => {
+        Object.assign(draft, updated)
+      })
     }
   }
 }

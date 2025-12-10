@@ -11,7 +11,8 @@ import type {
   MessagePart,
   AnyClientTool,
 } from '@tanstack/ai'
-import type { Collection, StandardSchemaV1 } from '@tanstack/db'
+import type { Collection } from '@tanstack/db'
+import type { StandardSchemaV1 } from '@standard-schema/spec'
 
 // ============================================================================
 // Stream Protocol Types
@@ -228,7 +229,7 @@ export interface SessionParticipant {
 }
 
 /**
- * Session metadata row.
+ * Session metadata row (local state only, not derived).
  */
 export interface SessionMetaRow {
   /** Session identifier */
@@ -241,8 +242,6 @@ export interface SessionMetaRow {
   lastSyncedAt: Date | null
   /** Error information if any */
   error: { message: string; code?: string } | null
-  /** Active participants */
-  participants: SessionParticipant[]
 }
 
 // ============================================================================
@@ -308,29 +307,40 @@ export interface AgentSpec {
   bodyTemplate?: Record<string, unknown>
 }
 
+
 // ============================================================================
 // Collection Types
 // ============================================================================
 
 /**
  * All collections exposed by DurableChatClient.
+ *
+ * All derived collections contain fully materialized objects - no helper
+ * functions needed to access the data. This is achieved through a two-stage
+ * pipeline: aggregate first (groupBy + collect), then materialize (fn.select).
+ *
+ * Note: The actual types are inferred from the createCollections() method
+ * in DurableChatClient. This interface is kept for documentation purposes
+ * and for consumers who want to reference the collection types explicitly.
  */
 export interface DurableChatCollections {
   /** Root stream collection synced from Durable Stream */
   stream: Collection<StreamRowWithOffset>
-  /** Materialized messages collection */
+  /** Materialized messages (keyed by messageId) */
   messages: Collection<MessageRow>
-  /** Active generations collection */
+  /** Active generations - messages currently being streamed (keyed by messageId) */
   activeGenerations: Collection<ActiveGenerationRow>
-  /** Tool calls collection */
+  /** Materialized tool calls (keyed by toolCallId) */
   toolCalls: Collection<ToolCallRow>
-  /** Tool results collection */
+  /** Materialized tool results (keyed by resultId) */
   toolResults: Collection<ToolResultRow>
-  /** Approvals collection */
+  /** Materialized approvals (keyed by approvalId) */
   approvals: Collection<ApprovalRow>
-  /** Session metadata collection */
+  /** Session participants derived from stream (keyed by actorId) */
+  sessionParticipants: Collection<SessionParticipant>
+  /** Session metadata collection (local state) */
   sessionMeta: Collection<SessionMetaRow>
-  /** Session statistics collection */
+  /** Session statistics (keyed by sessionId) */
   sessionStats: Collection<SessionStatsRow>
 }
 
@@ -450,24 +460,3 @@ export interface DurableSessionStreamConfig {
   schema?: StandardSchemaV1<StreamRowWithOffset>
 }
 
-// ============================================================================
-// Messages Collection Configuration Types
-// ============================================================================
-
-/**
- * Configuration for creating a messages collection.
- */
-export interface DurableMessagesConfig {
-  /** Session identifier */
-  sessionId: string
-  /** Proxy URL for API requests */
-  proxyUrl: string
-  /** Actor identifier */
-  actorId: string
-  /** Actor type */
-  actorType: ActorType
-  /** Stream collection to derive from */
-  streamCollection: Collection<StreamRowWithOffset>
-  /** Optional schema for validation */
-  schema?: StandardSchemaV1<MessageRow>
-}

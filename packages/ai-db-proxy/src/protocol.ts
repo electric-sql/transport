@@ -95,6 +95,20 @@ export class AIDBSessionProtocol extends WrapperProtocol {
   }
 
   /**
+   * Get an existing session stream.
+   */
+  async getSession(sessionId: string): Promise<Stream | null> {
+    return await this.sdk.getStream(sessionId)
+  }
+
+  /**
+   * Delete a session stream.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.sdk.deleteStream(sessionId)
+  }
+
+  /**
    * Initialize session state in storage.
    */
   private async initializeSessionState(sessionId: string): Promise<void> {

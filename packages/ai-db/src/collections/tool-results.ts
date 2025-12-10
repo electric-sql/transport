@@ -1,16 +1,21 @@
 /**
- * Tool results collection - derived livequery.
+ * Tool results collection - two-stage derived pipeline.
  *
- * Extracts tool execution results from stream rows.
+ * Extracts tool execution results from stream rows, derived from the
+ * collectedMessages intermediate collection.
+ *
+ * This follows the pattern: aggregate first → materialize second
  */
 
-import type {
-  Collection,
-  LiveQueryCollectionConfig,
-  StandardSchemaV1,
-} from '@tanstack/db'
-import type { StreamRowWithOffset, ToolResultRow } from '../types'
+import { createLiveQueryCollection } from '@tanstack/db'
+import type { Collection } from '@tanstack/db'
+import type { ToolResultRow } from '../types'
 import { extractToolResults } from '../materialize'
+import type { CollectedMessageRows } from './messages'
+
+// ============================================================================
+// Tool Results Collection
+// ============================================================================
 
 /**
  * Options for creating a tool results collection.
@@ -18,102 +23,39 @@ import { extractToolResults } from '../materialize'
 export interface ToolResultsCollectionOptions {
   /** Session identifier */
   sessionId: string
-  /** Stream collection to derive from */
-  streamCollection: Collection<StreamRowWithOffset>
-  /** Optional schema for validation */
-  schema?: StandardSchemaV1<ToolResultRow>
+  /** Collected messages collection (intermediate from messages pipeline) */
+  collectedMessagesCollection: Collection<CollectedMessageRows>
 }
 
 /**
- * Creates collection config for the tool results collection.
+ * Creates the tool results collection from collected messages.
  *
- * This is a derived livequery collection that extracts tool results
- * from stream rows. Each result is linked to its originating tool call
- * via toolCallId.
+ * Uses fn.select to extract tool results from each message's collected rows,
+ * then flattens them into individual ToolResultRow entries.
  *
  * @example
  * ```typescript
- * import { createToolResultsCollectionOptions } from '@electric-sql/ai-db'
- * import { createCollection } from '@tanstack/db'
+ * const toolResults = createToolResultsCollection({
+ *   sessionId: 'my-session',
+ *   collectedMessagesCollection,
+ * })
  *
- * const toolResultsCollection = createCollection(
- *   createToolResultsCollectionOptions({
- *     sessionId: 'my-session',
- *     streamCollection,
- *   })
- * )
+ * // Access tool results directly
+ * for (const result of toolResults.values()) {
+ *   console.log(result.toolCallId, result.output)
+ * }
  * ```
  */
-export function createToolResultsCollectionOptions(
+export function createToolResultsCollection(
   options: ToolResultsCollectionOptions
-): LiveQueryCollectionConfig<ToolResultRow> {
-  const { sessionId, streamCollection, schema } = options
+): Collection<ToolResultRow> {
+  const { collectedMessagesCollection } = options
 
-  return {
-    id: `session-tool-results:${sessionId}`,
-    schema,
-    getKey: (tr) => tr.id,
-
-    // Derived via livequery - extracts tool results from all stream rows
-    query: (q) =>
-      q
-        .from({ row: streamCollection })
-        .fn.select(({ rows }) => {
-          const allRows = rows as StreamRowWithOffset[]
-          return extractToolResults(allRows)
-        })
-        // Flatten the array of tool results
-        .fn.flatMap((results) => results),
-  }
-}
-
-/**
- * Get the result for a specific tool call.
- *
- * @param collection - Tool results collection
- * @param toolCallId - Tool call identifier
- * @returns Tool result or undefined
- */
-export function getToolResultForCall(
-  collection: Collection<ToolResultRow>,
-  toolCallId: string
-): ToolResultRow | undefined {
-  for (const result of collection.values()) {
-    if (result.toolCallId === toolCallId) {
-      return result
-    }
-  }
-  return undefined
-}
-
-/**
- * Check if a tool call has a result.
- *
- * @param collection - Tool results collection
- * @param toolCallId - Tool call identifier
- * @returns Whether the tool call has a result
- */
-export function hasToolResult(
-  collection: Collection<ToolResultRow>,
-  toolCallId: string
-): boolean {
-  return getToolResultForCall(collection, toolCallId) !== undefined
-}
-
-/**
- * Get all failed tool results.
- *
- * @param collection - Tool results collection
- * @returns Array of failed tool results
- */
-export function getFailedToolResults(
-  collection: Collection<ToolResultRow>
-): ToolResultRow[] {
-  const result: ToolResultRow[] = []
-  for (const tr of collection.values()) {
-    if (tr.error !== null) {
-      result.push(tr)
-    }
-  }
-  return result
+  // Extract tool results from each message's collected rows
+  // fn.select can return an array which will be flattened
+  return createLiveQueryCollection((q) =>
+    q
+      .from({ collected: collectedMessagesCollection })
+      .fn.select(({ collected }) => extractToolResults(collected.rows))
+  )
 }

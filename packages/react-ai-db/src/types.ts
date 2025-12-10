@@ -39,7 +39,7 @@ export interface UseDurableChatReturn<
   // ═══════════════════════════════════════════════════════════════════════
 
   /** All messages in the conversation */
-  messages: UIMessage<TTools>[]
+  messages: UIMessage[]
 
   /** Send a user message */
   sendMessage: (content: string) => Promise<void>
@@ -63,7 +63,7 @@ export interface UseDurableChatReturn<
   error: Error | undefined
 
   /** Manually set messages (for hydration) */
-  setMessages: (messages: UIMessage<TTools>[]) => void
+  setMessages: (messages: UIMessage[]) => void
 
   /** Add a tool result */
   addToolResult: (result: ToolResultInput) => Promise<void>

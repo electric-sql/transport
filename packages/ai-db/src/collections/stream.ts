@@ -6,7 +6,8 @@
  */
 
 import { durableSessionStreamOptions } from '../collection'
-import type { CollectionConfig, StandardSchemaV1 } from '@tanstack/db'
+import type { CollectionConfig } from '@tanstack/db'
+import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { StreamRowWithOffset } from '../types'
 
 /**

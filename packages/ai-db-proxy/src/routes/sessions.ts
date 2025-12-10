@@ -49,7 +49,7 @@ export function createSessionRoutes(protocol: AIDBSessionProtocol) {
     const sessionId = c.req.param('sessionId')
 
     try {
-      const stream = await protocol.sdk.getStream(sessionId)
+      const stream = await protocol.getSession(sessionId)
 
       if (!stream) {
         return c.json({ error: 'Session not found' }, 404)
@@ -77,7 +77,7 @@ export function createSessionRoutes(protocol: AIDBSessionProtocol) {
     const sessionId = c.req.param('sessionId')
 
     try {
-      await protocol.sdk.deleteStream(sessionId)
+      await protocol.deleteSession(sessionId)
       return new Response(null, { status: 204 })
     } catch (error) {
       console.error('Failed to delete session:', error)

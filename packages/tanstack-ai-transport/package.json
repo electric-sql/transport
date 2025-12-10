@@ -26,8 +26,8 @@
     "@electric-sql/transport": "workspace:*"
   },
   "devDependencies": {
-    "@tanstack/ai": "0.1.0",
-    "@tanstack/ai-client": "0.1.0",
+    "@tanstack/ai": "workspace:*",
+    "@tanstack/ai-client": "workspace:*",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.7",
     "react": "^19.2.0",

@@ -10,6 +10,9 @@
  * - Multi-agent support with webhook registration
  * - Reactive collections for custom UI needs
  *
+ * All derived collections contain fully materialized objects - no helper
+ * functions needed. Access data directly from collections.
+ *
  * @example
  * ```typescript
  * import { DurableChatClient } from '@electric-sql/ai-db'
@@ -25,10 +28,14 @@
  * await client.sendMessage('Hello!')
  * console.log(client.messages)
  *
- * // Custom queries with collections
- * const pendingApprovals = client.collections.approvals.filter(
- *   a => a.status === 'pending'
- * )
+ * // Access collections directly (no helper functions needed)
+ * for (const message of client.collections.messages.values()) {
+ *   console.log(message.id, message.role, message.parts)
+ * }
+ *
+ * // Filter with standard collection methods
+ * const pending = [...client.collections.approvals.values()]
+ *   .filter(a => a.status === 'pending')
  * ```
  *
  * @packageDocumentation
@@ -84,7 +91,6 @@ export type {
   // Configuration types
   DurableChatClientOptions,
   DurableSessionStreamConfig,
-  DurableMessagesConfig,
 
   // Input types
   ToolResultInput,
@@ -116,53 +122,46 @@ export {
   createStreamCollectionOptions,
   type StreamCollectionOptions,
 
-  // Messages collection
-  createMessagesCollectionOptions,
-  createUserMessage,
+  // Messages collection (two-stage pipeline)
+  createCollectedMessagesCollection,
+  createMessagesCollection,
+  createMessagesPipeline,
   waitForKey,
+  type CollectedMessageRows,
+  type CollectedMessagesCollectionOptions,
+  type MessagesCollectionOptions,
+  type MessagesPipelineOptions,
+  type MessagesPipelineResult,
 
   // Tool calls collection
-  createToolCallsCollectionOptions,
-  getPendingToolCalls,
-  canExecuteToolCall,
+  createToolCallsCollection,
   type ToolCallsCollectionOptions,
 
   // Tool results collection
-  createToolResultsCollectionOptions,
-  getToolResultForCall,
-  hasToolResult,
-  getFailedToolResults,
+  createToolResultsCollection,
   type ToolResultsCollectionOptions,
 
   // Approvals collection
-  createApprovalsCollectionOptions,
-  getPendingApprovals,
-  getApprovalForToolCall,
-  requiresApproval,
-  isApproved,
-  getApprovalsByStatus,
+  createApprovalsCollection,
   type ApprovalsCollectionOptions,
 
   // Active generations collection
-  createActiveGenerationsCollectionOptions,
-  hasActiveGeneration,
-  getMostRecentActiveGeneration,
-  getActiveGenerationsForActor,
-  isMessageGenerating,
+  createActiveGenerationsCollection,
   type ActiveGenerationsCollectionOptions,
 
-  // Session metadata collection
+  // Session metadata collection (local state)
   createSessionMetaCollectionOptions,
   createInitialSessionMeta,
-  extractParticipants,
   updateConnectionStatus,
   updateSyncProgress,
-  updateParticipants,
-  upsertParticipant,
   type SessionMetaCollectionOptions,
 
+  // Session participants collection
+  createSessionParticipantsCollection,
+  type SessionParticipantsCollectionOptions,
+
   // Session statistics collection
-  createSessionStatsCollectionOptions,
+  createSessionStatsCollection,
   computeSessionStats,
   createEmptyStats,
   type SessionStatsCollectionOptions,

@@ -77,22 +77,6 @@ export {
   type ForkOptions,
   type ForkResult,
 
-  // Collection helpers
-  getPendingToolCalls,
-  canExecuteToolCall,
-  getToolResultForCall,
-  hasToolResult,
-  getFailedToolResults,
-  getPendingApprovals,
-  getApprovalForToolCall,
-  requiresApproval,
-  isApproved,
-  getApprovalsByStatus,
-  hasActiveGeneration,
-  getMostRecentActiveGeneration,
-  getActiveGenerationsForActor,
-  isMessageGenerating,
-
   // Materialization helpers
   extractTextContent,
   isUserMessage,

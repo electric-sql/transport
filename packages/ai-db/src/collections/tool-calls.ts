@@ -1,16 +1,24 @@
 /**
- * Tool calls collection - derived livequery.
+ * Tool calls collection - two-stage derived pipeline.
  *
- * Extracts and tracks tool call state from stream rows.
+ * Stage 1: collectedByMessage - groups stream rows by messageId using collect()
+ * Stage 2: toolCalls - extracts ToolCallRow objects using fn.select, one per tool call
+ *
+ * This follows the pattern: aggregate first → materialize second
+ *
+ * Note: Tool calls are extracted from the collectedMessages intermediate collection
+ * since tool call chunks are associated with messages.
  */
 
-import type {
-  Collection,
-  LiveQueryCollectionConfig,
-  StandardSchemaV1,
-} from '@tanstack/db'
-import type { StreamRowWithOffset, ToolCallRow } from '../types'
+import { createLiveQueryCollection } from '@tanstack/db'
+import type { Collection } from '@tanstack/db'
+import type { ToolCallRow } from '../types'
 import { extractToolCalls } from '../materialize'
+import type { CollectedMessageRows } from './messages'
+
+// ============================================================================
+// Tool Calls Collection
+// ============================================================================
 
 /**
  * Options for creating a tool calls collection.
@@ -18,81 +26,39 @@ import { extractToolCalls } from '../materialize'
 export interface ToolCallsCollectionOptions {
   /** Session identifier */
   sessionId: string
-  /** Stream collection to derive from */
-  streamCollection: Collection<StreamRowWithOffset>
-  /** Optional schema for validation */
-  schema?: StandardSchemaV1<ToolCallRow>
+  /** Collected messages collection (intermediate from messages pipeline) */
+  collectedMessagesCollection: Collection<CollectedMessageRows>
 }
 
 /**
- * Creates collection config for the tool calls collection.
+ * Creates the tool calls collection from collected messages.
  *
- * This is a derived livequery collection that extracts tool calls
- * from stream rows. It tracks the lifecycle of each tool call:
- * - pending: Tool call created, waiting for execution
- * - executing: Tool call being executed
- * - complete: Tool call finished (has result)
+ * Uses fn.select to extract tool calls from each message's collected rows,
+ * then flattens them into individual ToolCallRow entries.
  *
  * @example
  * ```typescript
- * import { createToolCallsCollectionOptions } from '@electric-sql/ai-db'
- * import { createCollection } from '@tanstack/db'
+ * const toolCalls = createToolCallsCollection({
+ *   sessionId: 'my-session',
+ *   collectedMessagesCollection,
+ * })
  *
- * const toolCallsCollection = createCollection(
- *   createToolCallsCollectionOptions({
- *     sessionId: 'my-session',
- *     streamCollection,
- *   })
- * )
+ * // Access tool calls directly
+ * for (const toolCall of toolCalls.values()) {
+ *   console.log(toolCall.id, toolCall.name, toolCall.state)
+ * }
  * ```
  */
-export function createToolCallsCollectionOptions(
+export function createToolCallsCollection(
   options: ToolCallsCollectionOptions
-): LiveQueryCollectionConfig<ToolCallRow> {
-  const { sessionId, streamCollection, schema } = options
+): Collection<ToolCallRow> {
+  const { collectedMessagesCollection } = options
 
-  return {
-    id: `session-tool-calls:${sessionId}`,
-    schema,
-    getKey: (tc) => tc.id,
-
-    // Derived via livequery - extracts tool calls from all stream rows
-    query: (q) =>
-      q
-        .from({ row: streamCollection })
-        .fn.select(({ rows }) => {
-          const allRows = rows as StreamRowWithOffset[]
-          return extractToolCalls(allRows)
-        })
-        // Flatten the array of tool calls
-        .fn.flatMap((toolCalls) => toolCalls),
-  }
-}
-
-/**
- * Get pending tool calls that need to be executed.
- *
- * @param collection - Tool calls collection
- * @returns Array of pending tool calls
- */
-export function getPendingToolCalls(
-  collection: Collection<ToolCallRow>
-): ToolCallRow[] {
-  const result: ToolCallRow[] = []
-  for (const tc of collection.values()) {
-    if (tc.state === 'pending' || tc.state === 'executing') {
-      result.push(tc)
-    }
-  }
-  return result
-}
-
-/**
- * Check if a tool call is ready for execution.
- *
- * @param toolCall - Tool call to check
- * @returns Whether the tool call can be executed
- */
-export function canExecuteToolCall(toolCall: ToolCallRow): boolean {
-  return toolCall.state === 'pending' && toolCall.input !== null
+  // Extract tool calls from each message's collected rows
+  // fn.select can return an array which will be flattened
+  return createLiveQueryCollection((q) =>
+    q
+      .from({ collected: collectedMessagesCollection })
+      .fn.select(({ collected }) => extractToolCalls(collected.rows))
+  )
 }

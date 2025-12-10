@@ -1,22 +1,184 @@
 /**
- * Messages collection - derived livequery with optimistic mutations.
+ * Messages collection - two-stage derived pipeline.
  *
- * Materializes UIMessage objects by grouping stream rows by messageId.
- * Supports optimistic insert for user messages.
+ * Stage 1: collectedMessages - groups stream rows by messageId using collect()
+ * Stage 2: messages - materializes MessageRow objects using fn.select()
+ *
+ * This follows the pattern: aggregate first → materialize second
  */
 
-import type {
-  Collection,
-  LiveQueryCollectionConfig,
-  StandardSchemaV1,
+import {
+  createLiveQueryCollection,
+  collect,
 } from '@tanstack/db'
-import type {
-  StreamRowWithOffset,
-  MessageRow,
-  DurableMessagesConfig,
-  ActorType,
-} from '../types'
-import { materializeMessage, extractTextContent } from '../materialize'
+import type { Collection } from '@tanstack/db'
+import type { StreamRowWithOffset, MessageRow } from '../types'
+import { materializeMessage } from '../materialize'
+
+// ============================================================================
+// Stage 1: Collected Messages (intermediate)
+// ============================================================================
+
+/**
+ * Intermediate type - collected rows grouped by messageId.
+ * This is the output of Stage 1 and input to Stage 2.
+ */
+export interface CollectedMessageRows {
+  messageId: string
+  rows: StreamRowWithOffset[]
+}
+
+/**
+ * Options for creating a collected messages collection.
+ */
+export interface CollectedMessagesCollectionOptions {
+  /** Session identifier */
+  sessionId: string
+  /** Stream collection to derive from */
+  streamCollection: Collection<StreamRowWithOffset>
+}
+
+/**
+ * Creates the Stage 1 collection: groups stream rows by messageId.
+ *
+ * This is an intermediate collection - consumers should use the
+ * messages collection (Stage 2) which materializes the rows.
+ */
+export function createCollectedMessagesCollection(
+  options: CollectedMessagesCollectionOptions
+) {
+  const { streamCollection } = options
+
+  // Pass query function directly to createLiveQueryCollection to let it infer types
+  return createLiveQueryCollection((q) =>
+    q
+      .from({ row: streamCollection })
+      .groupBy(({ row }) => row.messageId)
+      .select(({ row }) => ({
+        messageId: row.messageId,
+        rows: collect(row),
+      }))
+  )
+}
+
+// ============================================================================
+// Stage 2: Materialized Messages
+// ============================================================================
+
+/**
+ * Options for creating a messages collection.
+ */
+export interface MessagesCollectionOptions {
+  /** Session identifier */
+  sessionId: string
+  /** Collected messages collection (Stage 1) */
+  collectedMessagesCollection: Collection<CollectedMessageRows>
+}
+
+/**
+ * Creates the Stage 2 collection: materializes MessageRow from collected rows.
+ *
+ * This is the collection that consumers should use - it contains fully
+ * materialized MessageRow objects, not intermediate collected rows.
+ *
+ * @example
+ * ```typescript
+ * // First create the intermediate collection
+ * const collectedMessages = createCollectedMessagesCollection({
+ *   sessionId: 'my-session',
+ *   streamCollection,
+ * })
+ *
+ * // Then create the materialized messages collection
+ * const messages = createMessagesCollection({
+ *   sessionId: 'my-session',
+ *   collectedMessagesCollection: collectedMessages,
+ * })
+ *
+ * // Access messages directly - no helper functions needed
+ * for (const message of messages.values()) {
+ *   console.log(message.id, message.role, message.parts)
+ * }
+ * ```
+ */
+export function createMessagesCollection(
+  options: MessagesCollectionOptions
+) {
+  const { collectedMessagesCollection } = options
+
+  // Pass query function directly to createLiveQueryCollection to let it infer types
+  return createLiveQueryCollection((q) =>
+    q
+      .from({ collected: collectedMessagesCollection })
+      .fn.select(({ collected }) => materializeMessage(collected.rows))
+  )
+}
+
+// ============================================================================
+// Combined Factory (convenience)
+// ============================================================================
+
+/**
+ * Options for creating both stages of the messages pipeline.
+ */
+export interface MessagesPipelineOptions {
+  /** Session identifier */
+  sessionId: string
+  /** Stream collection to derive from */
+  streamCollection: Collection<StreamRowWithOffset>
+}
+
+/**
+ * Result of creating the messages pipeline.
+ */
+export interface MessagesPipelineResult {
+  /** Stage 1: Collected messages (intermediate - usually not needed directly) */
+  collectedMessages: Collection<CollectedMessageRows>
+  /** Stage 2: Materialized messages (use this one) */
+  messages: Collection<MessageRow>
+}
+
+/**
+ * Creates the complete messages pipeline (both stages).
+ *
+ * This is a convenience function that creates both the intermediate
+ * collected messages collection and the final materialized messages collection.
+ *
+ * @example
+ * ```typescript
+ * const { messages } = createMessagesPipeline({
+ *   sessionId: 'my-session',
+ *   streamCollection,
+ * })
+ *
+ * // Access messages directly
+ * const allMessages = messages.toArray()
+ * const singleMessage = messages.get('message-id')
+ * ```
+ */
+export function createMessagesPipeline(
+  options: MessagesPipelineOptions
+) {
+  const { sessionId, streamCollection } = options
+
+  // Stage 1: Create collected messages collection
+  const collectedMessages = createCollectedMessagesCollection({
+    sessionId,
+    streamCollection,
+  })
+
+  // Stage 2: Create materialized messages collection
+  const messages = createMessagesCollection({
+    sessionId,
+    collectedMessagesCollection: collectedMessages,
+  })
+
+  return { collectedMessages, messages }
+}
+
+// ============================================================================
+// Utility: Wait for message sync
+// ============================================================================
 
 /**
  * Wait for a key to appear in a collection's synced data.
@@ -26,9 +188,9 @@ import { materializeMessage, extractTextContent } from '../materialize'
  * @param timeout - Timeout in milliseconds
  * @returns Promise that resolves when key appears
  */
-export function waitForKey<T>(
-  collection: Collection<T, string>,
-  key: string,
+export function waitForKey<T extends object>(
+  collection: Collection<T, string | number>,
+  key: string | number,
   timeout = 30000
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -54,109 +216,4 @@ export function waitForKey<T>(
       }
     })
   })
-}
-
-/**
- * Creates collection config for the messages collection.
- *
- * This is a derived livequery collection that:
- * 1. Queries: Materializes MessageRow objects by grouping stream rows by messageId
- * 2. Mutates: Has onInsert handlers for optimistic user message insertion
- *
- * The client generates messageId locally (UUID) before posting to proxy.
- * This enables immediate optimistic insertion while tracking sync confirmation.
- *
- * @example
- * ```typescript
- * import { createMessagesCollectionOptions } from '@electric-sql/ai-db'
- * import { createCollection } from '@tanstack/db'
- *
- * const messagesCollection = createCollection(
- *   createMessagesCollectionOptions({
- *     sessionId: 'my-session',
- *     proxyUrl: 'http://localhost:4000',
- *     actorId: 'user-123',
- *     actorType: 'user',
- *     streamCollection,
- *   })
- * )
- * ```
- */
-export function createMessagesCollectionOptions(
-  config: DurableMessagesConfig
-): LiveQueryCollectionConfig<MessageRow> {
-  const { sessionId, proxyUrl, actorId, actorType, streamCollection, schema } = config
-
-  return {
-    id: `session-messages:${sessionId}`,
-    schema,
-    getKey: (msg) => msg.id,
-
-    // Derived via livequery - TanStack DB handles subscription and incremental updates
-    query: (q) =>
-      q
-        .from({ row: streamCollection })
-        .groupBy(({ row }) => row.messageId)
-        .fn.select(({ rows }) => materializeMessage(rows as StreamRowWithOffset[])),
-
-    // Mutation handler: Post to proxy, wait for sync
-    onInsert: async ({ transaction, collection }) => {
-      for (const mutation of transaction.mutations) {
-        const message = mutation.modified
-
-        // Post to proxy (messageId was generated by client)
-        const response = await fetch(
-          `${proxyUrl}/v1/sessions/${sessionId}/messages`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              messageId: message.id, // Client-generated messageId
-              content: extractTextContent(message),
-              actorId: actorId,
-              actorType: actorType,
-            }),
-          }
-        )
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(`Failed to send message: ${response.status} ${errorText}`)
-        }
-
-        // Wait for messageId to appear via the query pipeline
-        // When this resolves, synced data contains the message
-        // TanStack DB then drops optimistic state - no flicker
-        await waitForKey(collection, message.id)
-      }
-    },
-  }
-}
-
-/**
- * Create a new user message object for insertion.
- *
- * @param content - Text content of the message
- * @param actorId - Actor identifier
- * @param actorType - Actor type
- * @returns MessageRow ready for insertion
- */
-export function createUserMessage(
-  content: string,
-  actorId: string,
-  actorType: ActorType = 'user'
-): MessageRow {
-  const messageId = crypto.randomUUID()
-
-  return {
-    id: messageId,
-    role: 'user',
-    parts: [{ type: 'text', text: content }],
-    actorId,
-    actorType,
-    isComplete: true,
-    startOffset: '', // Will be filled by sync
-    endOffset: null,
-    createdAt: new Date(),
-  }
 }

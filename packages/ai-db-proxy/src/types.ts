@@ -65,9 +65,9 @@ export const agentSpecSchema = z.object({
   name: z.string().optional(),
   endpoint: z.string().url(),
   method: z.literal('POST').optional(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   triggers: z.enum(['all', 'user-messages']).optional(),
-  bodyTemplate: z.record(z.unknown()).optional(),
+  bodyTemplate: z.record(z.string(), z.unknown()).optional(),
 })
 
 // ============================================================================

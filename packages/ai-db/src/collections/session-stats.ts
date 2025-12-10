@@ -1,22 +1,15 @@
 /**
- * Session statistics collection - derived livequery.
+ * Session statistics collection - two-stage derived pipeline.
  *
- * Aggregate statistics derived from other collections.
+ * Computes aggregate statistics from the stream. Uses groupBy + collect
+ * to gather all rows, then fn.select to compute the stats.
+ *
+ * This follows the pattern: aggregate first → materialize second
  */
 
-import type {
-  Collection,
-  LiveQueryCollectionConfig,
-  StandardSchemaV1,
-} from '@tanstack/db'
-import type {
-  StreamRowWithOffset,
-  SessionStatsRow,
-  MessageRow,
-  ToolCallRow,
-  ApprovalRow,
-  ActiveGenerationRow,
-} from '../types'
+import { createLiveQueryCollection, collect } from '@tanstack/db'
+import type { Collection } from '@tanstack/db'
+import type { StreamRowWithOffset, SessionStatsRow, MessageRow } from '../types'
 import {
   groupRowsByMessage,
   materializeMessage,
@@ -26,6 +19,18 @@ import {
   parseChunk,
 } from '../materialize'
 
+// ============================================================================
+// Session Stats Collection
+// ============================================================================
+
+/**
+ * Intermediate type - collected rows for the session.
+ */
+interface CollectedSessionRows {
+  sessionId: string
+  rows: StreamRowWithOffset[]
+}
+
 /**
  * Options for creating a session stats collection.
  */
@@ -34,50 +39,51 @@ export interface SessionStatsCollectionOptions {
   sessionId: string
   /** Stream collection to derive stats from */
   streamCollection: Collection<StreamRowWithOffset>
-  /** Optional schema for validation */
-  schema?: StandardSchemaV1<SessionStatsRow>
 }
 
 /**
- * Creates collection config for the session statistics collection.
+ * Creates the session stats collection.
  *
- * This is a derived livequery collection that computes aggregate
- * statistics from the stream data. It's a single-row collection
- * that updates as the stream changes.
+ * Uses a two-stage pipeline:
+ * 1. Group all stream rows by sessionId and collect
+ * 2. Use fn.select to compute SessionStatsRow from collected rows
  *
  * @example
  * ```typescript
- * import { createSessionStatsCollectionOptions } from '@electric-sql/ai-db'
- * import { createCollection } from '@tanstack/db'
+ * const sessionStats = createSessionStatsCollection({
+ *   sessionId: 'my-session',
+ *   streamCollection,
+ * })
  *
- * const sessionStatsCollection = createCollection(
- *   createSessionStatsCollectionOptions({
- *     sessionId: 'my-session',
- *     streamCollection,
- *   })
- * )
+ * // Access stats directly
+ * const stats = sessionStats.get('my-session')
+ * console.log(stats?.messageCount, stats?.toolCallCount)
  * ```
  */
-export function createSessionStatsCollectionOptions(
+export function createSessionStatsCollection(
   options: SessionStatsCollectionOptions
-): LiveQueryCollectionConfig<SessionStatsRow> {
-  const { sessionId, streamCollection, schema } = options
+): Collection<SessionStatsRow> {
+  const { sessionId, streamCollection } = options
 
-  return {
-    id: `session-stats:${sessionId}`,
-    schema,
-    getKey: (stats) => stats.sessionId,
+  // Stage 1: Create intermediate collection with collected rows
+  const collectedRows = createLiveQueryCollection((q) =>
+    q
+      .from({ row: streamCollection })
+      .groupBy(() => sessionId)
+      .select(({ row }) => ({
+        sessionId,
+        rows: collect(row),
+      }))
+  )
 
-    // Derived via livequery - computes aggregate statistics
-    query: (q) =>
-      q
-        .from({ row: streamCollection })
-        .fn.select(({ rows }) => {
-          const allRows = rows as StreamRowWithOffset[]
-          return [computeSessionStats(sessionId, allRows)]
-        })
-        .fn.flatMap((stats) => stats),
-  }
+  // Stage 2: Compute stats from collected rows
+  return createLiveQueryCollection((q) =>
+    q
+      .from({ collected: collectedRows })
+      .fn.select(({ collected }) =>
+        computeSessionStats(collected.sessionId, collected.rows)
+      )
+  )
 }
 
 /**
@@ -91,6 +97,10 @@ export function computeSessionStats(
   sessionId: string,
   rows: StreamRowWithOffset[]
 ): SessionStatsRow {
+  if (rows.length === 0) {
+    return createEmptyStats(sessionId)
+  }
+
   // Group rows by message
   const grouped = groupRowsByMessage(rows)
 
@@ -169,14 +179,18 @@ function extractTokenUsage(rows: StreamRowWithOffset[]): {
     if (!chunk) continue
 
     // Look for usage information in chunks
-    const usage = (chunk as { usage?: {
-      totalTokens?: number
-      promptTokens?: number
-      completionTokens?: number
-      total_tokens?: number
-      prompt_tokens?: number
-      completion_tokens?: number
-    } }).usage
+    const usage = (
+      chunk as {
+        usage?: {
+          totalTokens?: number
+          promptTokens?: number
+          completionTokens?: number
+          total_tokens?: number
+          prompt_tokens?: number
+          completion_tokens?: number
+        }
+      }
+    ).usage
 
     if (usage) {
       // Handle both camelCase and snake_case formats
