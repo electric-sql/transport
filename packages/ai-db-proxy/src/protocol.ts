@@ -181,12 +181,15 @@ export class AIDBSessionProtocol extends WrapperProtocol {
       seq: this.getNextSeq(messageId),
     }
 
-    await stream.append(JSON.stringify(row))
+    await stream.append(row)
     await this.updateLastActivity(sessionId)
   }
 
   /**
-   * Write a user message to the stream.
+   * Write a user message to the stream as a complete UIMessage.
+   *
+   * User messages are stored as complete objects in a single stream row
+   * because they are complete when sent (unlike assistant messages which stream).
    */
   async writeUserMessage(
     stream: Stream,
@@ -195,25 +198,30 @@ export class AIDBSessionProtocol extends WrapperProtocol {
     actorId: string,
     content: string
   ): Promise<void> {
-    // Write message-start chunk
-    await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
-      type: 'message-start',
-      role: 'user',
-    })
+    // Create complete UIMessage
+    const message = {
+      id: messageId,
+      role: 'user' as const,
+      parts: [{ type: 'text' as const, content }],
+      createdAt: new Date(),
+    }
 
-    // Write text-delta chunk with full content
-    await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
-      type: 'text-delta',
-      textDelta: content,
-    })
+    // Write as single user-message chunk
+    const row: StreamRow = {
+      sessionId,
+      messageId,
+      actorId,
+      actorType: 'user',
+      chunk: JSON.stringify({
+        type: 'user-message',
+        message,
+      }),
+      createdAt: new Date().toISOString(),
+      seq: 0, // Single row, so seq is always 0
+    }
 
-    // Write message-end chunk
-    await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
-      type: 'message-end',
-    })
-
-    // Clean up sequence counter
-    this.clearSeq(messageId)
+    await stream.append(row)
+    await this.updateLastActivity(sessionId)
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -237,12 +245,6 @@ export class AIDBSessionProtocol extends WrapperProtocol {
     await this.addActiveGeneration(sessionId, messageId)
 
     try {
-      // Write message-start chunk
-      await this.writeChunk(stream, sessionId, messageId, agent.id, 'agent', {
-        type: 'message-start',
-        role: 'assistant',
-      })
-
       // Prepare request body
       const requestBody = {
         ...agent.bodyTemplate,
@@ -276,11 +278,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
           abortController.signal
         )
       }
-
-      // Write message-end chunk
-      await this.writeChunk(stream, sessionId, messageId, agent.id, 'agent', {
-        type: 'message-end',
-      })
+      // No wrapper chunks needed - TanStack AI's 'done' chunk signals completion
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         // Write stop chunk on abort
@@ -523,17 +521,18 @@ export class AIDBSessionProtocol extends WrapperProtocol {
 
   /**
    * Write a tool result to the stream.
+   *
+   * @param messageId - Client-generated message ID for optimistic updates.
    */
   async writeToolResult(
     stream: Stream,
     sessionId: string,
+    messageId: string,
     actorId: string,
     toolCallId: string,
     output: unknown,
     error: string | null
   ): Promise<void> {
-    const messageId = crypto.randomUUID()
-
     await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
       type: 'tool-result',
       toolCallId,
@@ -639,7 +638,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
     console.log(`Session stream created: ${stream.id}`, metadata)
   }
 
-  async onMessageAppended(stream: Stream, data: Uint8Array): Promise<void> {
+  async onMessageAppended(stream: Stream, data: unknown): Promise<void> {
     // Can be used for analytics, logging, etc.
   }
 }

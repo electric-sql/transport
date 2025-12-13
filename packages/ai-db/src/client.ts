@@ -8,7 +8,8 @@
  * No helper functions needed to access data.
  */
 
-import { createCollection } from '@tanstack/db'
+import { createCollection, createOptimisticAction } from '@tanstack/db'
+import type { Transaction } from '@tanstack/db'
 import type { UIMessage, AnyClientTool } from '@tanstack/ai'
 import type {
   DurableChatClientOptions,
@@ -20,6 +21,7 @@ import type {
   ForkOptions,
   ForkResult,
   ToolResultInput,
+  ClientToolResultInput,
   ApprovalResponseInput,
   ActorType,
 } from './types'
@@ -40,6 +42,20 @@ import {
   waitForKey,
 } from './collections'
 import { extractTextContent } from './materialize'
+
+/**
+ * Unified input for all message optimistic actions.
+ */
+interface MessageActionInput {
+  /** Message content */
+  content: string
+  /** Client-generated message ID */
+  messageId: string
+  /** Message role */
+  role: 'user' | 'assistant' | 'system'
+  /** Optional agent to invoke (for user messages) */
+  agent?: AgentSpec
+}
 
 /**
  * DurableChatClient provides a TanStack AI-compatible chat interface
@@ -89,6 +105,14 @@ export class DurableChatClient<
   private _error: Error | undefined
   private _abortController: AbortController | null = null
 
+  // Counter for generating unique optimistic offsets
+  private _optimisticSeq = 0
+
+  // Optimistic actions for mutations
+  private _messageAction: (input: MessageActionInput) => Transaction
+  private _addToolResultAction: (input: ClientToolResultInput) => Transaction
+  private _addApprovalResponseAction: (input: ApprovalResponseInput) => Transaction
+
   // ═══════════════════════════════════════════════════════════════════════
   // Constructor
   // ═══════════════════════════════════════════════════════════════════════
@@ -108,6 +132,11 @@ export class DurableChatClient<
     this._collections.sessionMeta.insert(
       createInitialSessionMeta(this.sessionId)
     )
+
+    // Initialize optimistic actions
+    this._messageAction = this.createMessageAction()
+    this._addToolResultAction = this.createAddToolResultAction()
+    this._addApprovalResponseAction = this.createApprovalResponseAction()
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -207,9 +236,14 @@ export class DurableChatClient<
    */
   get messages(): UIMessage[] {
     // Convert MessageRow to UIMessage
-    return [...this._collections.messages.values()].map((row) =>
-      this.messageRowToUIMessage(row)
-    )
+    const rawValues = [...this._collections.messages.values()]
+    console.group('📨 client.messages getter called')
+    console.log('Messages collection size:', this._collections.messages.size)
+    console.log('Raw values:', rawValues)
+    const result = rawValues.map((row) => this.messageRowToUIMessage(row))
+    console.log('Mapped UIMessages:', result)
+    console.groupEnd()
+    return result
   }
 
   /**
@@ -230,38 +264,55 @@ export class DurableChatClient<
   /**
    * Send a user message and trigger agent response.
    *
+   * Uses optimistic updates for instant UI feedback. The message appears
+   * immediately in the UI while the server request is in flight.
+   *
    * @param content - Text content to send
    */
   async sendMessage(content: string): Promise<void> {
-    const messageId = crypto.randomUUID()
+    await this.executeAction(this._messageAction, {
+      content,
+      messageId: crypto.randomUUID(),
+      role: 'user',
+      agent: this.options.agent,
+    })
+  }
 
+  /**
+   * Append a message to the conversation.
+   *
+   * Uses optimistic updates for instant UI feedback.
+   * For user messages, this triggers agent response if an agent is configured.
+   *
+   * @param message - UIMessage or ModelMessage to append
+   */
+  async append(message: UIMessage | { role: string; content: string }): Promise<void> {
+    const content =
+      'parts' in message
+        ? extractTextContent(message as MessageRow)
+        : (message as { content: string }).content
+
+    const role = message.role as 'user' | 'assistant' | 'system'
+    const messageId = 'id' in message ? message.id : crypto.randomUUID()
+
+    await this.executeAction(this._messageAction, {
+      content,
+      messageId,
+      role,
+      agent: role === 'user' ? this.options.agent : undefined,
+    })
+  }
+
+  /**
+   * Execute an optimistic action with unified error handling.
+   */
+  private async executeAction<T>(
+    action: (input: T) => Transaction,
+    input: T
+  ): Promise<void> {
     try {
-      // Post the message to the proxy, which will write to the durable stream
-      const response = await fetch(
-        `${this.options.proxyUrl}/v1/sessions/${this.sessionId}/messages`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messageId,
-            content,
-            role: 'user',
-            actorId: this.actorId,
-            actorType: this.actorType,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Failed to send message: ${response.status} ${errorText}`)
-      }
-
-      // Wait for sync - the message will appear in the messages collection
-      await waitForKey(this._collections.messages, messageId)
-
-      // Notify callback
-      this.options.onMessagesChange?.(this.messages)
+      const transaction = action(input)
+      await transaction.isPersisted.promise
     } catch (error) {
       this._error = error instanceof Error ? error : new Error(String(error))
       this.options.onError?.(this._error)
@@ -270,50 +321,75 @@ export class DurableChatClient<
   }
 
   /**
-   * Append a message to the conversation.
-   *
-   * @param message - UIMessage or ModelMessage to append
+   * POST JSON to proxy endpoint with error handling.
    */
-  async append(message: UIMessage | { role: string; content: string }): Promise<void> {
-    // Normalize to content string
-    const content =
-      'parts' in message
-        ? extractTextContent(message as MessageRow)
-        : (message as { content: string }).content
-
-    const role = message.role
-
-    if (role === 'user') {
-      await this.sendMessage(content)
-    } else {
-      // For non-user messages, post directly to proxy
-      const messageId = crypto.randomUUID()
-
-      const response = await fetch(
-        `${this.options.proxyUrl}/v1/sessions/${this.sessionId}/messages`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messageId,
-            content,
-            role,
-            actorId: this.actorId,
-            actorType: this.actorType,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Failed to append message: ${response.status} ${errorText}`)
-      }
-
-      // Wait for sync
-      await waitForKey(this._collections.messages, messageId)
-
-      this.options.onMessagesChange?.(this.messages)
+  private async postToProxy(
+    path: string,
+    body: Record<string, unknown>,
+    options?: { actorIdHeader?: boolean }
+  ): Promise<void> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
     }
+    if (options?.actorIdHeader) {
+      headers['X-Actor-Id'] = this.actorId
+    }
+
+    const response = await fetch(
+      `${this.options.proxyUrl}${path}`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      }
+    )
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Request failed: ${response.status} ${errorText}`)
+    }
+  }
+
+  /**
+   * Create the unified optimistic action for all message types.
+   * Handles user, assistant, and system messages with the same pattern.
+   */
+  private createMessageAction() {
+    return createOptimisticAction<MessageActionInput>({
+      onMutate: ({ content, messageId, role }) => {
+        // Z-padded offset sorts after any real Durable Streams offset.
+        // Durable Streams format: "0000000000000000_0000000000001234" (16-digit seq + 16-digit byte)
+        // Optimistic format: "zzzzzzzzzzzzzzzz_${seq.padStart(16, '0')}" (z-prefix sorts last)
+        // When the real message syncs, this row is replaced with the real offset.
+        const seq = (this._optimisticSeq++).toString().padStart(16, '0')
+        const optimisticOffset = `zzzzzzzzzzzzzzzz_${seq}`
+
+        this._collections.messages.insert({
+          id: messageId,
+          role,
+          parts: [{ type: 'text' as const, content }],
+          actorId: this.actorId,
+          actorType: this.actorType,
+          isComplete: true,
+          startOffset: optimisticOffset,
+          endOffset: optimisticOffset,
+          createdAt: new Date(),
+        })
+      },
+      mutationFn: async ({ content, messageId, role, agent }) => {
+        await this.postToProxy(`/v1/sessions/${this.sessionId}/messages`, {
+          messageId,
+          content,
+          role,
+          actorId: this.actorId,
+          actorType: this.actorType,
+          ...(agent && { agent }),
+        })
+
+        await waitForKey(this._collections.messages, messageId)
+        this.options.onMessagesChange?.(this.messages)
+      },
+    })
   }
 
   /**
@@ -388,55 +464,92 @@ export class DurableChatClient<
   /**
    * Add a tool result.
    *
+   * Uses optimistic updates for instant UI feedback.
+   *
    * @param result - Tool result to add
    */
   async addToolResult(result: ToolResultInput): Promise<void> {
-    const response = await fetch(
-      `${this.options.proxyUrl}/v1/sessions/${this.sessionId}/tool-results`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Actor-Id': this.actorId,
-        },
-        body: JSON.stringify({
-          toolCallId: result.toolCallId,
-          output: result.output,
-          error: result.error ?? null,
-        }),
-      }
-    )
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to add tool result: ${response.status} ${errorText}`)
+    // Ensure messageId is set for optimistic updates
+    const inputWithMessageId: ClientToolResultInput = {
+      ...result,
+      messageId: result.messageId ?? crypto.randomUUID(),
     }
+    await this.executeAction(this._addToolResultAction, inputWithMessageId)
+  }
+
+  /**
+   * Create the optimistic action for adding tool results.
+   *
+   * Uses client-generated messageId for predictable tool result IDs,
+   * enabling proper optimistic updates.
+   */
+  private createAddToolResultAction() {
+    return createOptimisticAction<ClientToolResultInput>({
+      onMutate: ({ messageId, toolCallId, output, error }) => {
+        const resultId = `${messageId}:${toolCallId}`
+        this._collections.toolResults.insert({
+          id: resultId,
+          toolCallId,
+          messageId,
+          output,
+          error: error ?? null,
+          actorId: this.actorId,
+          createdAt: new Date(),
+        })
+      },
+      mutationFn: async ({ messageId, toolCallId, output, error }) => {
+        await this.postToProxy(
+          `/v1/sessions/${this.sessionId}/tool-results`,
+          { messageId, toolCallId, output, error: error ?? null },
+          { actorIdHeader: true }
+        )
+
+        await waitForKey(this._collections.toolResults, `${messageId}:${toolCallId}`)
+      },
+    })
   }
 
   /**
    * Add an approval response.
    *
+   * Uses optimistic updates for instant UI feedback.
+   *
    * @param response - Approval response
    */
   async addToolApprovalResponse(response: ApprovalResponseInput): Promise<void> {
-    const res = await fetch(
-      `${this.options.proxyUrl}/v1/sessions/${this.sessionId}/approvals/${response.id}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Actor-Id': this.actorId,
-        },
-        body: JSON.stringify({
-          approved: response.approved,
-        }),
-      }
-    )
+    await this.executeAction(this._addApprovalResponseAction, response)
+  }
 
-    if (!res.ok) {
-      const errorText = await res.text()
-      throw new Error(`Failed to respond to approval: ${res.status} ${errorText}`)
-    }
+  /**
+   * Create the optimistic action for approval responses.
+   *
+   * Note: We use optimistic updates for approvals since we're updating
+   * an existing row (not inserting). The approval ID is known client-side.
+   * The optimistic update provides instant feedback while the server
+   * processes the response.
+   */
+  private createApprovalResponseAction() {
+    return createOptimisticAction<ApprovalResponseInput>({
+      onMutate: ({ id, approved }) => {
+        const approval = this._collections.approvals.get(id)
+        if (approval) {
+          this._collections.approvals.update(id, (draft) => {
+            draft.status = approved ? 'approved' : 'denied'
+            draft.respondedBy = this.actorId
+            draft.respondedAt = new Date()
+          })
+        }
+      },
+      mutationFn: async ({ id, approved }) => {
+        await this.postToProxy(
+          `/v1/sessions/${this.sessionId}/approvals/${id}`,
+          { approved },
+          { actorIdHeader: true }
+        )
+        // No waitForKey needed - optimistic update shows immediate feedback,
+        // natural sync will confirm or replace it.
+      },
+    })
   }
 
   /**

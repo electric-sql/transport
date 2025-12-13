@@ -16,6 +16,8 @@ import {
   createApprovalRoutes,
   createForkRoutes,
   createHealthRoutes,
+  createStreamRoutes,
+  PROTOCOL_RESPONSE_HEADERS,
 } from './routes'
 import type { AIDBProtocolOptions } from './types'
 
@@ -73,6 +75,8 @@ export function createServer(options: AIDBProxyServerOptions) {
           'X-Actor-Type',
           'X-Session-Id',
         ],
+        // Expose Durable Streams protocol headers to browser clients
+        exposeHeaders: [...PROTOCOL_RESPONSE_HEADERS],
       })
     )
   }
@@ -105,6 +109,9 @@ export function createServer(options: AIDBProxyServerOptions) {
   // Fork (nested under sessions)
   v1.route('/sessions', createForkRoutes(protocol))
 
+  // Stream proxy - forwards to Durable Streams server
+  v1.route('/stream', createStreamRoutes(options.baseUrl))
+
   app.route('/v1', v1)
 
   // Root info
@@ -114,6 +121,7 @@ export function createServer(options: AIDBProxyServerOptions) {
       version: '0.1.0',
       endpoints: {
         health: '/health',
+        stream: '/v1/stream/sessions/:sessionId',
         sessions: '/v1/sessions/:sessionId',
         messages: '/v1/sessions/:sessionId/messages',
         agents: '/v1/sessions/:sessionId/agents',

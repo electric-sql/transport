@@ -102,12 +102,16 @@ export interface ToolResultRequest {
   toolCallId: string
   output: unknown
   error?: string | null
+  /** Client-generated message ID for optimistic updates */
+  messageId?: string
 }
 
 export const toolResultRequestSchema = z.object({
   toolCallId: z.string(),
   output: z.unknown(),
   error: z.string().nullable().optional(),
+  /** Client-generated message ID for optimistic updates */
+  messageId: z.string().optional(),
 })
 
 /**

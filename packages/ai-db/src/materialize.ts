@@ -1,8 +1,11 @@
 /**
  * Message materialization from stream rows.
  *
- * Chunk processing is delegated to TanStack AI's StreamProcessor.
- * Our responsibility is grouping chunks by messageId and feeding them to the processor.
+ * Handles two formats:
+ * 1. User messages: Single row with {type: 'user-message', message: UIMessage}
+ * 2. Assistant messages: Multiple rows with TanStack AI StreamChunks
+ *
+ * Chunk processing for assistant messages is delegated to TanStack AI's StreamProcessor.
  */
 
 import { StreamProcessor } from '@tanstack/ai'
@@ -24,6 +27,8 @@ import type {
   ApprovalRow,
   ApprovalStatus,
   ActiveGenerationRow,
+  UserMessageChunk,
+  DurableStreamChunk,
 } from './types'
 
 // ============================================================================
@@ -50,52 +55,95 @@ function isApprovalRequestedChunk(chunk: StreamChunk): chunk is ApprovalRequeste
   return chunk.type === 'approval-requested'
 }
 
+/**
+ * Type guard for UserMessageChunk.
+ */
+function isUserMessageChunk(chunk: DurableStreamChunk | null): chunk is UserMessageChunk {
+  return chunk !== null && chunk.type === 'user-message'
+}
+
 // ============================================================================
 // Message Materialization
 // ============================================================================
 
 /**
- * Materialize a single message from its stream rows.
- * Uses TanStack AI's StreamProcessor for chunk semantics.
+ * Parse a JSON-encoded chunk string.
  *
- * @param rows - Stream rows for a single message
- * @returns Materialized message row
+ * @param chunkJson - JSON string containing DurableStreamChunk
+ * @returns Parsed chunk or null if invalid
  */
-export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
-  if (rows.length === 0) {
-    throw new Error('Cannot materialize message from empty rows')
+export function parseChunk(chunkJson: string): DurableStreamChunk | null {
+  try {
+    return JSON.parse(chunkJson) as DurableStreamChunk
+  } catch {
+    return null
   }
+}
 
-  // Sort by seq to ensure correct order
+/**
+ * Materialize a user message from a single row.
+ * User messages are stored as complete UIMessage objects.
+ */
+function materializeUserMessage(
+  row: StreamRowWithOffset,
+  chunk: UserMessageChunk
+): MessageRow {
+  const { message } = chunk
+
+  return {
+    id: message.id,
+    role: message.role as MessageRole,
+    parts: message.parts,
+    actorId: row.actorId,
+    actorType: row.actorType,
+    isComplete: true,
+    startOffset: row.offset,
+    endOffset: row.offset,
+    createdAt: message.createdAt ? new Date(message.createdAt) : new Date(row.createdAt),
+  }
+}
+
+/**
+ * Materialize an assistant message from streamed chunks.
+ * Uses TanStack AI's StreamProcessor to process chunks.
+ */
+function materializeAssistantMessage(rows: StreamRowWithOffset[]): MessageRow {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq)
   const first = sorted[0]
   const last = sorted[sorted.length - 1]
 
-  // Create a StreamProcessor instance for this message
+  // Create processor and start assistant message
   const processor = new StreamProcessor()
+  processor.startAssistantMessage()
 
-  // Determine role from first chunk or actor type
-  const firstChunk = parseChunk(first.chunk)
-  // ContentStreamChunk.role is 'assistant' | undefined, so check actorType for user messages
-  const isUserMessage = first.actorType === 'user'
+  let isComplete = false
 
-  if (isUserMessage) {
-    processor.startUserMessage()
-  } else {
-    processor.startAssistantMessage()
-  }
-
-  // Feed each chunk to the processor
   for (const row of sorted) {
     const chunk = parseChunk(row.chunk)
-    if (chunk) {
-      processor.processChunk(chunk)
+    if (!chunk) continue
+
+    // Skip legacy wrapper chunks (for backward compatibility)
+    if ((chunk as any).type === 'message-start' || (chunk as any).type === 'message-end') {
+      if ((chunk as any).type === 'message-end') {
+        isComplete = true
+      }
+      continue
+    }
+
+    // Skip user-message chunks (shouldn't be in assistant messages, but guard)
+    if (isUserMessageChunk(chunk)) continue
+
+    // Process TanStack AI StreamChunk
+    try {
+      processor.processChunk(chunk as StreamChunk)
+    } catch {
+      // Skip chunks that can't be processed
+    }
+
+    if (isDoneChunk(chunk as StreamChunk)) {
+      isComplete = true
     }
   }
-
-  // Check if message is complete (has 'done' chunk)
-  const state = processor.getState()
-  const isComplete = state.done || hasFinishChunk(sorted)
 
   // Finalize if complete
   if (isComplete) {
@@ -104,19 +152,12 @@ export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
 
   // Get the materialized UIMessage
   const messages = processor.getMessages()
-  const uiMessage = messages[messages.length - 1]
-
-  // Determine role - only ContentStreamChunk has role property
-  let role: MessageRole = 'assistant'
-  if (isUserMessage) {
-    role = 'user'
-  }
-  // Note: 'system' role would typically be set differently, not via content chunks
+  const message = messages[messages.length - 1]
 
   return {
     id: first.messageId,
-    role,
-    parts: uiMessage?.parts ?? [],
+    role: 'assistant',
+    parts: message?.parts ?? [],
     actorId: first.actorId,
     actorType: first.actorType,
     isComplete,
@@ -127,36 +168,35 @@ export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
 }
 
 /**
- * Parse a JSON-encoded chunk string.
+ * Materialize a MessageRow from collected stream rows.
  *
- * @param chunkJson - JSON string containing StreamChunk
- * @returns Parsed StreamChunk or null if invalid
- */
-export function parseChunk(chunkJson: string): StreamChunk | null {
-  try {
-    return JSON.parse(chunkJson) as StreamChunk
-  } catch {
-    return null
-  }
-}
-
-/**
- * Check if rows contain a finish/done chunk.
+ * Handles two formats:
+ * 1. User messages: Single row with {type: 'user-message', message: UIMessage}
+ * 2. Assistant messages: Multiple rows with TanStack AI StreamChunks
  *
- * @param rows - Stream rows to check
- * @returns Whether a finish chunk exists
+ * @param rows - Stream rows for a single message
+ * @returns Materialized message row
  */
-function hasFinishChunk(rows: StreamRowWithOffset[]): boolean {
-  for (const row of rows) {
-    const chunk = parseChunk(row.chunk)
-    if (!chunk) continue
-
-    // Check for done chunk
-    if (isDoneChunk(chunk)) {
-      return true
-    }
+export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
+  if (!rows || rows.length === 0) {
+    throw new Error('Cannot materialize message from empty rows')
   }
-  return false
+
+  // Sort by seq to ensure correct order
+  const sorted = [...rows].sort((a, b) => a.seq - b.seq)
+  const firstChunk = parseChunk(sorted[0].chunk)
+
+  if (!firstChunk) {
+    throw new Error('Failed to parse first chunk')
+  }
+
+  // Check if this is a complete user message
+  if (isUserMessageChunk(firstChunk)) {
+    return materializeUserMessage(sorted[0], firstChunk)
+  }
+
+  // Otherwise, process as streamed assistant message
+  return materializeAssistantMessage(sorted)
 }
 
 // ============================================================================
@@ -176,26 +216,30 @@ export function extractToolCalls(rows: StreamRowWithOffset[]): ToolCallRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
+    // Skip user-message chunks (not relevant for tool calls)
+    if (isUserMessageChunk(chunk)) continue
+
     // Handle tool_call chunks
-    if (isToolCallChunk(chunk)) {
-      const toolCallId = chunk.toolCall.id
+    const streamChunk = chunk as StreamChunk
+    if (isToolCallChunk(streamChunk)) {
+      const toolCallId = streamChunk.toolCall.id
       if (!toolCallId) continue
 
       const existing = toolCallMap.get(toolCallId)
 
       if (existing) {
         // Update existing tool call - accumulate arguments
-        existing.arguments += chunk.toolCall.function.arguments
-        if (chunk.toolCall.function.name) {
-          existing.name = chunk.toolCall.function.name
+        existing.arguments += streamChunk.toolCall.function.arguments
+        if (streamChunk.toolCall.function.name) {
+          existing.name = streamChunk.toolCall.function.name
         }
       } else {
         // Create new tool call
         toolCallMap.set(toolCallId, {
           id: toolCallId,
           messageId: row.messageId,
-          name: chunk.toolCall.function.name ?? '',
-          arguments: chunk.toolCall.function.arguments ?? '',
+          name: streamChunk.toolCall.function.name ?? '',
+          arguments: streamChunk.toolCall.function.arguments ?? '',
           input: null,
           state: 'pending' as ToolCallState,
           actorId: row.actorId,
@@ -205,8 +249,8 @@ export function extractToolCalls(rows: StreamRowWithOffset[]): ToolCallRow[] {
     }
 
     // Check for tool-input-available to mark as executing
-    if (chunk.type === 'tool-input-available') {
-      const toolInputChunk = chunk as {
+    if (streamChunk.type === 'tool-input-available') {
+      const toolInputChunk = streamChunk as {
         toolCallId?: string
         input?: unknown
       }
@@ -251,12 +295,16 @@ export function extractToolResults(rows: StreamRowWithOffset[]): ToolResultRow[]
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    if (isToolResultChunk(chunk)) {
+    // Skip user-message chunks
+    if (isUserMessageChunk(chunk)) continue
+
+    const streamChunk = chunk as StreamChunk
+    if (isToolResultChunk(streamChunk)) {
       results.push({
-        id: `${row.messageId}:${chunk.toolCallId}`,
-        toolCallId: chunk.toolCallId,
+        id: `${row.messageId}:${streamChunk.toolCallId}`,
+        toolCallId: streamChunk.toolCallId,
         messageId: row.messageId,
-        output: chunk.content ?? null,
+        output: streamChunk.content ?? null,
         error: null,
         actorId: row.actorId,
         createdAt: new Date(row.createdAt),
@@ -284,13 +332,18 @@ export function extractApprovals(rows: StreamRowWithOffset[]): ApprovalRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
+    // Skip user-message chunks
+    if (isUserMessageChunk(chunk)) continue
+
+    const streamChunk = chunk as StreamChunk
+
     // Handle approval-requested chunks
-    if (isApprovalRequestedChunk(chunk)) {
-      const approvalId = chunk.approval.id
+    if (isApprovalRequestedChunk(streamChunk)) {
+      const approvalId = streamChunk.approval.id
       if (approvalId) {
         approvalMap.set(approvalId, {
           id: approvalId,
-          toolCallId: chunk.toolCallId ?? '',
+          toolCallId: streamChunk.toolCallId ?? '',
           messageId: row.messageId,
           status: 'pending' as ApprovalStatus,
           requestedBy: row.actorId,
@@ -313,6 +366,41 @@ export function extractApprovals(rows: StreamRowWithOffset[]): ApprovalRow[] {
 // ============================================================================
 
 /**
+ * Check if message rows indicate a complete message.
+ * User messages are always complete. Assistant messages are complete if they have a 'done' chunk.
+ */
+function isMessageComplete(rows: StreamRowWithOffset[]): boolean {
+  if (rows.length === 0) return false
+
+  const sorted = [...rows].sort((a, b) => a.seq - b.seq)
+  const firstChunk = parseChunk(sorted[0].chunk)
+
+  // User messages are always complete
+  if (firstChunk && isUserMessageChunk(firstChunk)) {
+    return true
+  }
+
+  // For assistant messages, check for done or message-end chunk
+  for (const row of rows) {
+    const chunk = parseChunk(row.chunk)
+    if (!chunk) continue
+
+    if (isUserMessageChunk(chunk)) continue
+
+    const streamChunk = chunk as StreamChunk
+    if (isDoneChunk(streamChunk)) {
+      return true
+    }
+    // Also check legacy message-end for backward compatibility
+    if ((chunk as any).type === 'message-end') {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
  * Detect active generations (incomplete messages) from rows.
  *
  * @param rowsByMessage - Map of messageId to rows
@@ -326,9 +414,8 @@ export function detectActiveGenerations(
   for (const [messageId, rows] of rowsByMessage) {
     if (rows.length === 0) continue
 
-    // Check if message is incomplete
-    const isComplete = hasFinishChunk(rows)
-    if (isComplete) continue
+    // Check if message is complete
+    if (isMessageComplete(rows)) continue
 
     // Sort by seq to find first and last
     const sorted = [...rows].sort((a, b) => a.seq - b.seq)

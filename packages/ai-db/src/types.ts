@@ -19,6 +19,26 @@ import type { StandardSchemaV1 } from '@standard-schema/spec'
 // ============================================================================
 
 /**
+ * Complete user message chunk - stored as single row in stream.
+ * Used for messages that are complete when written (user input, cached messages).
+ *
+ * This is different from TanStack AI's StreamChunk types, which are designed
+ * for streaming assistant responses. User messages are complete when sent,
+ * so we store them as complete UIMessage objects.
+ */
+export interface UserMessageChunk {
+  type: 'user-message'
+  message: UIMessage
+}
+
+/**
+ * Union of all chunk types we handle.
+ * - UserMessageChunk: Complete messages (user input)
+ * - StreamChunk: TanStack AI streaming chunks (assistant responses)
+ */
+export type DurableStreamChunk = UserMessageChunk | StreamChunk
+
+/**
  * Actor types in the chat session.
  */
 export type ActorType = 'user' | 'agent'
@@ -370,6 +390,12 @@ export interface DurableChatClientOptions<
   api?: string
   /** Additional request body fields */
   body?: Record<string, unknown>
+  /**
+   * Default agent to invoke for each user message.
+   * For single-agent scenarios, this provides a simpler alternative to registerAgents().
+   * The agent spec is sent with each sendMessage request.
+   */
+  agent?: AgentSpec
 
   // Callbacks (TanStack AI compatible)
   /** Called when response is received */
@@ -404,7 +430,15 @@ export interface ToolResultInput {
   output: unknown
   /** Error message if failed */
   error?: string
+  /** Client-generated message ID for optimistic updates (auto-generated if not provided) */
+  messageId?: string
 }
+
+/**
+ * Tool result input with required messageId (used internally for optimistic actions).
+ */
+export type ClientToolResultInput = Required<Pick<ToolResultInput, 'messageId'>> &
+  ToolResultInput
 
 /**
  * Input for adding an approval response.

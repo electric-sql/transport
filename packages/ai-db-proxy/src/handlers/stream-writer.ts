@@ -57,6 +57,7 @@ export class StreamWriter {
    * Write a tool result.
    */
   async writeToolResult(
+    messageId: string,
     actorId: string,
     toolCallId: string,
     output: unknown,
@@ -65,6 +66,7 @@ export class StreamWriter {
     await this.protocol.writeToolResult(
       this.stream,
       this.sessionId,
+      messageId,
       actorId,
       toolCallId,
       output,

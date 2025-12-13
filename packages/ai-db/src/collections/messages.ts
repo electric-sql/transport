@@ -10,6 +10,7 @@
 import {
   createLiveQueryCollection,
   collect,
+  minStr,
 } from '@tanstack/db'
 import type { Collection } from '@tanstack/db'
 import type { StreamRowWithOffset, MessageRow } from '../types'
@@ -26,6 +27,12 @@ import { materializeMessage } from '../materialize'
 export interface CollectedMessageRows {
   messageId: string
   rows: StreamRowWithOffset[]
+  /**
+   * The earliest createdAt timestamp (ISO 8601 string) among collected rows.
+   * Used for ordering messages chronologically.
+   * ISO 8601 strings sort lexicographically correctly.
+   */
+  startedAt: string | null | undefined
 }
 
 /**
@@ -46,19 +53,34 @@ export interface CollectedMessagesCollectionOptions {
  */
 export function createCollectedMessagesCollection(
   options: CollectedMessagesCollectionOptions
-) {
+): Collection<CollectedMessageRows> {
   const { streamCollection } = options
 
   // Pass query function directly to createLiveQueryCollection to let it infer types
-  return createLiveQueryCollection((q) =>
+  const collection = createLiveQueryCollection((q) =>
     q
       .from({ row: streamCollection })
       .groupBy(({ row }) => row.messageId)
       .select(({ row }) => ({
         messageId: row.messageId,
         rows: collect(row),
+        // Capture earliest timestamp for message ordering (ISO 8601 strings sort lexicographically)
+        startedAt: minStr(row.createdAt),
       }))
   )
+
+  // DEBUG: Subscribe to changes to see what's being collected
+  collection.subscribeChanges((changes) => {
+    console.group('🔄 collectedMessages changed')
+    console.log('Changes:', changes)
+    console.log('Collection size:', collection.size)
+    for (const item of collection.values()) {
+      console.log('Collected messageId:', item.messageId, 'rows count:', item.rows?.length ?? 0, 'startedAt:', item.startedAt)
+    }
+    console.groupEnd()
+  })
+
+  return collection
 }
 
 // ============================================================================
@@ -103,15 +125,21 @@ export interface MessagesCollectionOptions {
  */
 export function createMessagesCollection(
   options: MessagesCollectionOptions
-) {
+): Collection<MessageRow> {
   const { collectedMessagesCollection } = options
 
-  // Pass query function directly to createLiveQueryCollection to let it infer types
-  return createLiveQueryCollection((q) =>
-    q
-      .from({ collected: collectedMessagesCollection })
-      .fn.select(({ collected }) => materializeMessage(collected.rows))
-  )
+  // Pass query function to createLiveQueryCollection to let it infer types.
+  // Use config object form to provide explicit getKey - this is required for
+  // optimistic mutations (insert/update/delete) on derived collections.
+  return createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ collected: collectedMessagesCollection })
+        // Order by createdAt timestamp for chronological message ordering
+        .orderBy(({ collected }) => collected.startedAt, 'asc')
+        .fn.select(({ collected }) => materializeMessage(collected.rows)),
+    getKey: (row) => row.id,
+  })
 }
 
 // ============================================================================
@@ -158,7 +186,7 @@ export interface MessagesPipelineResult {
  */
 export function createMessagesPipeline(
   options: MessagesPipelineOptions
-) {
+): MessagesPipelineResult {
   const { sessionId, streamCollection } = options
 
   // Stage 1: Create collected messages collection

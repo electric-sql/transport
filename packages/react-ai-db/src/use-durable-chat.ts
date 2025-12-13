@@ -164,23 +164,43 @@ export function useDurableChat<
     }
 
     // Subscribe to active generations for isLoading state
-    const activeGensUnsubscribe = client.collections.activeGenerations.subscribeChanges(() => {
+    const activeGensUnsubscribe = client.collections.activeGenerations.subscribeChanges((changes) => {
+      console.log('🔔 activeGenerations changed:', changes, 'isLoading:', client.isLoading)
       setIsLoading(client.isLoading)
     })
 
     // Subscribe to messages collection for message updates
-    const messagesUnsubscribe = client.collections.messages.subscribeChanges(() => {
+    const messagesUnsubscribe = client.collections.messages.subscribeChanges((changes) => {
+      console.group('🔔 messages collection changed')
+      console.log('Changes:', changes)
+      console.log('client.messages:', client.messages)
+      console.log('Collection size:', client.collections.messages.size)
+      console.log('Collection values:', [...client.collections.messages.values()])
+      console.groupEnd()
       setMessages(client.messages as UIMessage[])
     })
 
+    // Subscribe to stream collection to see raw data flow
+    const streamUnsubscribe = client.collections.stream.subscribeChanges((changes) => {
+      console.group('🔔 stream collection changed')
+      console.log('Changes:', changes)
+      console.log('Stream collection size:', client.collections.stream.size)
+      if (changes.length > 0) {
+        console.log('First change:', changes[0])
+      }
+      console.groupEnd()
+    })
+
     // Subscribe to session meta for connection status
-    const metaUnsubscribe = client.collections.sessionMeta.subscribeChanges(() => {
+    const metaUnsubscribe = client.collections.sessionMeta.subscribeChanges((changes) => {
+      console.log('🔔 sessionMeta changed:', changes, 'status:', client.connectionStatus)
       setConnectionStatus(client.connectionStatus)
     })
 
     return () => {
       activeGensUnsubscribe.unsubscribe()
       messagesUnsubscribe.unsubscribe()
+      streamUnsubscribe.unsubscribe()
       metaUnsubscribe.unsubscribe()
       client.dispose()
     }

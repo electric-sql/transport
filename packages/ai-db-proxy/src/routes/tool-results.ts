@@ -25,6 +25,7 @@ export function createToolResultRoutes(protocol: AIDBSessionProtocol) {
       const body = toolResultRequestSchema.parse(rawBody)
 
       const actorId = c.req.header('X-Actor-Id') ?? crypto.randomUUID()
+      const messageId = body.messageId ?? crypto.randomUUID()
 
       // Get session
       const stream = await protocol.getOrCreateSession(sessionId)
@@ -33,6 +34,7 @@ export function createToolResultRoutes(protocol: AIDBSessionProtocol) {
       await protocol.writeToolResult(
         stream,
         sessionId,
+        messageId,
         actorId,
         body.toolCallId,
         body.output,

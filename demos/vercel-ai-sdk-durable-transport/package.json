@@ -1,9 +1,9 @@
 {
-  "name": "@example/next-openai",
+  "name": "@example/vercel-ai-sdk-durable-transport",
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --port 5173",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

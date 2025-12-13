@@ -71,9 +71,11 @@ export function createActiveGenerationsCollection(
   const { messagesCollection } = options
 
   // Filter messages for incomplete ones and transform to ActiveGenerationRow
+  // Order by createdAt to ensure chronological ordering
   return createLiveQueryCollection((q) =>
     q
       .from({ message: messagesCollection })
+      .orderBy(({ message }) => message.createdAt, 'asc')
       .fn.where(({ message }) => !message.isComplete)
       .fn.select(({ message }) => messageToActiveGeneration(message))
   )

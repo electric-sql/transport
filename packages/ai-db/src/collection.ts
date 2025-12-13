@@ -21,7 +21,7 @@ import type {
  * - Session-aware URL pattern: `{baseUrl}/v1/stream/sessions/{sessionId}`
  * - Primary key: `${messageId}:${seq}`
  * - Deduplication key: `${messageId}:${seq}` (handles batch-level offset replays)
- * - Storage key prefix: `ai-db:session:{sessionId}`
+ * - No localStorage persistence (sync from scratch on page refresh)
  *
  * @example
  * ```typescript
@@ -63,8 +63,8 @@ export function durableSessionStreamOptions(config: DurableSessionStreamConfig) 
     // Additional headers for stream requests
     headers,
 
-    // Persist offsets with session-specific key
-    storageKey: `ai-db:session:${sessionId}`,
+    // Disable localStorage offset persistence - sync from scratch on page refresh
+    storageKey: false,
   })
 }
 

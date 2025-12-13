@@ -1,5 +1,5 @@
 {
-  "name": "tanstack-react-chat",
+  "name": "@example/tanstack-ai-durable-transport",
   "private": true,
   "type": "module",
   "scripts": {
