@@ -70,18 +70,18 @@ export async function handleSendMessage(
       },
     ]
 
-    // Optionally invoke inline agent
+    // Fire-and-forget: invoke agents in the background.
+    // We must NOT await here - if we do, the client's optimistic transaction
+    // stays in 'persisting' state, blocking all sync updates from reaching
+    // subscribers - preventing incremental streaming in the UI.
+    // Errors are written to the stream via writeChunk({ type: 'error', ... })
+    // inside invokeAgent, so clients will see them via sync.
     if (body.agent) {
-      await protocol.invokeAgent(stream, sessionId, body.agent, messageHistory)
+      protocol.invokeAgent(stream, sessionId, body.agent, messageHistory)
     }
 
-    // Notify registered agents
-    await protocol.notifyRegisteredAgents(
-      stream,
-      sessionId,
-      'user-messages',
-      messageHistory
-    )
+    // Fire-and-forget: notify registered agents (already doesn't await internally)
+    protocol.notifyRegisteredAgents(stream, sessionId, 'user-messages', messageHistory)
 
     const response: SendMessageResponse = { messageId }
     return c.json(response, 200)

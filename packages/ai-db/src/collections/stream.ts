@@ -24,6 +24,11 @@ export interface StreamCollectionOptions {
   headers?: Record<string, string>
   /** Optional schema for validation */
   schema?: StandardSchemaV1<StreamRowWithOffset>
+  /**
+   * AbortSignal to cancel the stream sync.
+   * When aborted, the sync will stop and cleanup will be called.
+   */
+  signal?: AbortSignal
 }
 
 /**
@@ -54,5 +59,6 @@ export function createStreamCollectionOptions(
     initialOffset: options.initialOffset,
     headers: options.headers,
     schema: options.schema,
-  })
+    signal: options.signal,
+  }) as CollectionConfig<StreamRowWithOffset>
 }

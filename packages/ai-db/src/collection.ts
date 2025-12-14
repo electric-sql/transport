@@ -37,7 +37,7 @@ import type {
  * ```
  */
 export function durableSessionStreamOptions(config: DurableSessionStreamConfig) {
-  const { sessionId, baseUrl, initialOffset, headers, schema } = config
+  const { sessionId, baseUrl, initialOffset, headers, schema, signal } = config
 
   return durableStreamCollectionOptions<StreamRow>({
     // Stream URL for this session
@@ -65,6 +65,9 @@ export function durableSessionStreamOptions(config: DurableSessionStreamConfig) 
 
     // Disable localStorage offset persistence - sync from scratch on page refresh
     storageKey: false,
+
+    // AbortSignal to cancel the stream sync
+    signal,
   })
 }
 

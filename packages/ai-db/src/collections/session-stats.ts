@@ -66,24 +66,30 @@ export function createSessionStatsCollection(
   const { sessionId, streamCollection } = options
 
   // Stage 1: Create intermediate collection with collected rows
-  const collectedRows = createLiveQueryCollection((q) =>
-    q
-      .from({ row: streamCollection })
-      .groupBy(() => sessionId)
-      .select(({ row }) => ({
-        sessionId,
-        rows: collect(row),
-      }))
-  )
+  // startSync: true ensures the collection starts syncing immediately.
+  const collectedRows = createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ row: streamCollection })
+        .groupBy(() => sessionId)
+        .select(({ row }) => ({
+          sessionId,
+          rows: collect(row),
+        })),
+    startSync: true,
+  })
 
   // Stage 2: Compute stats from collected rows
-  return createLiveQueryCollection((q) =>
-    q
-      .from({ collected: collectedRows })
-      .fn.select(({ collected }) =>
-        computeSessionStats(collected.sessionId, collected.rows)
-      )
-  )
+  // startSync: true ensures the collection starts syncing immediately.
+  return createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ collected: collectedRows })
+        .fn.select(({ collected }) =>
+          computeSessionStats(collected.sessionId, collected.rows)
+        ),
+    startSync: true,
+  })
 }
 
 /**

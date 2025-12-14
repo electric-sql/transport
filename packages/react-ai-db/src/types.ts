@@ -20,12 +20,19 @@ import type { UIMessage, AnyClientTool } from '@tanstack/ai'
  */
 export interface UseDurableChatOptions<
   TTools extends ReadonlyArray<AnyClientTool> = AnyClientTool[],
-> extends DurableChatClientOptions<TTools> {
+> extends Partial<DurableChatClientOptions<TTools>> {
   /**
    * Whether to automatically connect on mount.
    * @default true
    */
   autoConnect?: boolean
+
+  /**
+   * Pre-created client instance.
+   * If provided, the hook will use this client instead of creating a new one.
+   * Useful for testing or when you need to share a client between components.
+   */
+  client?: DurableChatClient<TTools>
 }
 
 /**
@@ -62,9 +69,6 @@ export interface UseDurableChatReturn<
   /** Current error, if any */
   error: Error | undefined
 
-  /** Manually set messages (for hydration) */
-  setMessages: (messages: UIMessage[]) => void
-
   /** Add a tool result */
   addToolResult: (result: ToolResultInput) => Promise<void>
 
@@ -75,11 +79,23 @@ export interface UseDurableChatReturn<
   // Durable extensions
   // ═══════════════════════════════════════════════════════════════════════
 
-  /** The underlying DurableChatClient instance */
-  client: DurableChatClient<TTools>
+  /**
+   * Whether the client is ready (created and available).
+   * Use this to check if client/collections are safe to access.
+   */
+  isReady: boolean
 
-  /** All collections for custom queries */
-  collections: DurableChatCollections
+  /**
+   * The underlying DurableChatClient instance.
+   * May be undefined until the client is created (check isReady first).
+   */
+  client: DurableChatClient<TTools> | undefined
+
+  /**
+   * All collections for custom queries.
+   * May be undefined until the client is created (check isReady first).
+   */
+  collections: DurableChatCollections | undefined
 
   /** Current connection status */
   connectionStatus: ConnectionStatus

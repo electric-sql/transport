@@ -24,36 +24,68 @@ const appUrl =
     ? window.location.origin
     : `http://localhost:5175`
 
-// Stable session ID - could be made dynamic for multi-session support
-const SESSION_ID = `tanstack-durable-demo`
+// LocalStorage key for session ID
+const SESSION_ID_KEY = 'tanstack-durable-session-id'
+
+// Generate a new session ID
+function generateSessionId(): string {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+// Get or create session ID from localStorage
+function getSessionId(): string {
+  if (typeof window === 'undefined') return generateSessionId()
+
+  const stored = localStorage.getItem(SESSION_ID_KEY)
+  if (stored) return stored
+
+  const newId = generateSessionId()
+  localStorage.setItem(SESSION_ID_KEY, newId)
+  return newId
+}
+
+// Create a new session (generates new ID and stores it)
+function createNewSession(): string {
+  const newId = generateSessionId()
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(SESSION_ID_KEY, newId)
+  }
+  return newId
+}
 
 // Default agent spec - tells ai-db-proxy where to forward LLM requests
-const defaultAgent: AgentSpec = {
-  id: 'openai-chat',
-  name: 'OpenAI Chat',
-  endpoint: `${appUrl}/api/chat`,
-  method: 'POST',
-  triggers: 'user-messages',
+function getDefaultAgent(): AgentSpec {
+  return {
+    id: 'openai-chat',
+    name: 'OpenAI Chat',
+    endpoint: `${appUrl}/api/chat`,
+    method: 'POST',
+    triggers: 'user-messages',
+  }
 }
 
 function ChatPage() {
-  const {
-    messages,
-    sendMessage,
-    isLoading,
-    stop,
-    clear,
-    connectionStatus,
-    collections,
-  } = useDurableChat({
-    sessionId: SESSION_ID,
-    proxyUrl,
-    agent: defaultAgent,
+  const [sessionId, setSessionId] = useState(() => getSessionId())
+
+  const { messages, sendMessage, isLoading, stop, connectionStatus, collections } = useDurableChat({
+    sessionId, proxyUrl, agent: getDefaultAgent()
   })
 
   const handleSubmit = async (input: string) => {
     if (!input.trim() || isLoading) return
+
     await sendMessage(input.trim())
+  }
+
+  const handleClearChat = async () => {
+    const newSessionId = createNewSession()
+
+    // Create session on server before changing state to avoid 404 on sync
+    // This blocks, not really in the optimistic spirit. Can be improved
+    // with get or create semantics on sessionIds.
+    await fetch(`${proxyUrl}/v1/sessions/${newSessionId}`, { method: 'PUT' })
+
+    setSessionId(newSessionId)
   }
 
   return (
@@ -64,11 +96,11 @@ function ChatPage() {
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900/50">
           <ConnectionStatusBadge status={connectionStatus} />
           <button
-            onClick={clear}
+            onClick={handleClearChat}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
           >
             <Trash2 className="w-3 h-3" />
-            Clear Chat
+            New Chat
           </button>
         </div>
 
@@ -93,7 +125,7 @@ function ChatPage() {
           </p>
         </div>
         <div className="flex-1 overflow-hidden">
-          <ClientOnlyStreamDebug collections={collections} />
+          <ClientOnlyStreamDebug key={sessionId} collections={collections} />
         </div>
       </div>
     </div>
@@ -128,61 +160,21 @@ function ClientOnlyStreamDebug({ collections }: { collections: DurableChatClient
  */
 function StreamDebugPanel({ collections }: { collections: DurableChatClient['collections'] }) {
   // Use useLiveQuery to reactively get stream rows for debug panel
+  // Order by offset to show chunks in chronological order
   const streamRows = useLiveQuery(
-    (q) => q.from({ row: collections.stream }),
+    (q) => q
+      .from({ row: collections.stream })
+      .orderBy(({ row }) => row.offset, 'asc'),
     [collections.stream]
   )
-
-  // Also query the messages collection to see materialization
-  const messagesQuery = useLiveQuery(
-    (q) => q.from({ msg: collections.messages }),
-    [collections.messages]
-  )
-
-  // DEBUG: Log raw stream data
-  useEffect(() => {
-    console.group('🔍 DEBUG: Stream Collection')
-    console.log('streamRows.data:', streamRows.data)
-    console.log('streamRows.data length:', streamRows.data?.length ?? 0)
-    if (streamRows.data && streamRows.data.length > 0) {
-      console.log('First row:', streamRows.data[0])
-      console.log('First row keys:', Object.keys(streamRows.data[0]))
-      console.log('First row chunk (raw):', streamRows.data[0].chunk)
-      console.log('First row chunk type:', typeof streamRows.data[0].chunk)
-    }
-    console.groupEnd()
-  }, [streamRows.data])
-
-  // DEBUG: Log messages collection
-  useEffect(() => {
-    console.group('🔍 DEBUG: Messages Collection')
-    console.log('messagesQuery.data:', messagesQuery.data)
-    console.log('messagesQuery.data length:', messagesQuery.data?.length ?? 0)
-    if (messagesQuery.data && messagesQuery.data.length > 0) {
-      messagesQuery.data.forEach((msg, i) => {
-        console.log(`Message ${i}:`, msg)
-      })
-    }
-    console.groupEnd()
-  }, [messagesQuery.data])
 
   // Parse chunks from stream rows for debug display
   const parsedChunks = useMemo(() => {
     if (!streamRows.data) return []
     return streamRows.data.map((row: StreamRowWithOffset) => {
-      // DEBUG: Log each chunk parsing attempt
-      console.log('🔍 Parsing chunk:', {
-        chunk: row.chunk,
-        chunkType: typeof row.chunk,
-        messageId: row.messageId,
-        seq: row.seq
-      })
       try {
-        const parsed = JSON.parse(row.chunk) as { type: string; [key: string]: unknown }
-        console.log('🔍 Parsed result:', parsed)
-        return parsed
-      } catch (e) {
-        console.error('🔍 Parse error:', e, 'raw:', row.chunk)
+        return JSON.parse(row.chunk) as { type: string; [key: string]: unknown }
+      } catch {
         return { type: 'unknown', raw: row.chunk }
       }
     })
@@ -456,7 +448,9 @@ function DebugPanel({ chunks }: { chunks: ParsedChunk[] }) {
                         : `text-gray-400`
               }`}
             >
-              {chunk.type}
+              {chunk.type === `content` && `delta` in chunk
+                ? 'delta'
+                : chunk.type}
             </span>
             <span className="text-gray-500 ml-2">
               {chunk.type === `content` && `delta` in chunk

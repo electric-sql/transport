@@ -414,6 +414,13 @@ export interface DurableChatClientOptions<
     /** Additional headers for stream requests */
     headers?: Record<string, string>
   }
+
+  /**
+   * Pre-created stream collection for testing.
+   * If provided, the client will use this instead of creating its own.
+   * @internal
+   */
+  streamCollection?: Collection<StreamRowWithOffset>
 }
 
 // ============================================================================
@@ -492,5 +499,10 @@ export interface DurableSessionStreamConfig {
   headers?: Record<string, string>
   /** Optional schema for validation */
   schema?: StandardSchemaV1<StreamRowWithOffset>
+  /**
+   * AbortSignal to cancel the stream sync.
+   * When aborted, the sync will stop and cleanup will be called.
+   */
+  signal?: AbortSignal
 }
 

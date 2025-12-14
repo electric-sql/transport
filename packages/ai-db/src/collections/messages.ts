@@ -10,6 +10,7 @@
 import {
   createLiveQueryCollection,
   collect,
+  count,
   minStr,
 } from '@tanstack/db'
 import type { Collection } from '@tanstack/db'
@@ -33,6 +34,13 @@ export interface CollectedMessageRows {
    * ISO 8601 strings sort lexicographically correctly.
    */
   startedAt: string | null | undefined
+  /**
+   * Number of rows in this group.
+   * Used as a discriminator to force change detection when new rows are added.
+   * Without this, TanStack DB might not detect that the rows array has changed
+   * since the messageId key and startedAt remain the same.
+   */
+  rowCount: number
 }
 
 /**
@@ -56,28 +64,25 @@ export function createCollectedMessagesCollection(
 ): Collection<CollectedMessageRows> {
   const { streamCollection } = options
 
-  // Pass query function directly to createLiveQueryCollection to let it infer types
-  const collection = createLiveQueryCollection((q) =>
-    q
-      .from({ row: streamCollection })
-      .groupBy(({ row }) => row.messageId)
-      .select(({ row }) => ({
-        messageId: row.messageId,
-        rows: collect(row),
-        // Capture earliest timestamp for message ordering (ISO 8601 strings sort lexicographically)
-        startedAt: minStr(row.createdAt),
-      }))
-  )
-
-  // DEBUG: Subscribe to changes to see what's being collected
-  collection.subscribeChanges((changes) => {
-    console.group('🔄 collectedMessages changed')
-    console.log('Changes:', changes)
-    console.log('Collection size:', collection.size)
-    for (const item of collection.values()) {
-      console.log('Collected messageId:', item.messageId, 'rows count:', item.rows?.length ?? 0, 'startedAt:', item.startedAt)
-    }
-    console.groupEnd()
+  // Use config object form with startSync: true to ensure the collection
+  // starts syncing immediately upon creation, providing demand for upstream data
+  const collection = createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ row: streamCollection })
+        .groupBy(({ row }) => row.messageId)
+        .select(({ row }) => ({
+          messageId: row.messageId,
+          rows: collect(row),
+          // Capture earliest timestamp for message ordering (ISO 8601 strings sort lexicographically)
+          startedAt: minStr(row.createdAt),
+          // Count rows as a discriminator to force change detection when new rows are added.
+          // Without this, TanStack DB might not detect that the rows array has changed
+          // since the messageId key and startedAt remain the same.
+          rowCount: count(row),
+        })),
+    getKey: (row) => row.messageId,
+    startSync: true,
   })
 
   return collection
@@ -131,15 +136,18 @@ export function createMessagesCollection(
   // Pass query function to createLiveQueryCollection to let it infer types.
   // Use config object form to provide explicit getKey - this is required for
   // optimistic mutations (insert/update/delete) on derived collections.
-  return createLiveQueryCollection({
+  // startSync: true ensures the collection starts syncing immediately.
+  const collection = createLiveQueryCollection({
     query: (q) =>
       q
         .from({ collected: collectedMessagesCollection })
-        // Order by createdAt timestamp for chronological message ordering
         .orderBy(({ collected }) => collected.startedAt, 'asc')
         .fn.select(({ collected }) => materializeMessage(collected.rows)),
     getKey: (row) => row.id,
+    startSync: true,
   })
+
+  return collection
 }
 
 // ============================================================================
@@ -225,11 +233,13 @@ export function waitForKey<T extends object>(
     // Check if already present (race condition guard)
     if (collection.has(key)) {
       resolve()
+
       return
     }
 
     const timer = setTimeout(() => {
       subscription.unsubscribe()
+
       reject(new Error(`Timeout waiting for key ${key}`))
     }, timeout)
 
@@ -239,7 +249,9 @@ export function waitForKey<T extends object>(
       )
       if (found || collection.has(key)) {
         clearTimeout(timer)
+
         subscription.unsubscribe()
+
         resolve()
       }
     })

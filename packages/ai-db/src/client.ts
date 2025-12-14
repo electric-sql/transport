@@ -89,12 +89,19 @@ interface MessageActionInput {
  *   .filter(tc => tc.state === 'pending')
  * ```
  */
+
+// Debug: instance counter for tracking client lifecycle
+let clientInstanceCounter = 0
+
 export class DurableChatClient<
   TTools extends ReadonlyArray<AnyClientTool> = AnyClientTool[],
 > {
   readonly sessionId: string
   readonly actorId: string
   readonly actorType: ActorType
+
+  // Debug: unique instance ID for logging
+  private readonly _instanceId: number
 
   private readonly options: DurableChatClientOptions<TTools>
   // Collections are typed via inference from createCollections()
@@ -103,7 +110,9 @@ export class DurableChatClient<
   private _isConnected = false
   private _isPaused = false
   private _error: Error | undefined
-  private _abortController: AbortController | null = null
+  // AbortController created at construction time to pass signal to stream collection.
+  // Aborted on disconnect() to cancel the stream sync.
+  private readonly _abortController: AbortController
 
   // Counter for generating unique optimistic offsets
   private _optimisticSeq = 0
@@ -118,10 +127,14 @@ export class DurableChatClient<
   // ═══════════════════════════════════════════════════════════════════════
 
   constructor(options: DurableChatClientOptions<TTools>) {
+    this._instanceId = ++clientInstanceCounter
     this.options = options
     this.sessionId = options.sessionId
     this.actorId = options.actorId ?? crypto.randomUUID()
     this.actorType = options.actorType ?? 'user'
+
+    // Create abort controller before collections so we can pass signal to stream
+    this._abortController = new AbortController()
 
     // Create collections pipeline
     const { collections, collectedMessages } = this.createCollections()
@@ -146,14 +159,19 @@ export class DurableChatClient<
   private createCollections() {
     const baseUrl = this.options.proxyUrl
 
-    // Create root stream collection (read-only, synced from Durable Streams)
-    const stream = createCollection(
-      createStreamCollectionOptions({
-        sessionId: this.sessionId,
-        baseUrl,
-        headers: this.options.stream?.headers,
-      })
-    )
+    // Use injected stream collection if provided (for testing),
+    // otherwise create one synced from Durable Streams
+    const stream =
+      this.options.streamCollection ??
+      createCollection(
+        createStreamCollectionOptions({
+          sessionId: this.sessionId,
+          baseUrl,
+          headers: this.options.stream?.headers,
+          // Pass abort signal to cancel stream sync on disconnect
+          signal: this._abortController.signal,
+        })
+      )
 
     // Stage 1: Create collected messages (intermediate - groups by messageId)
     const collectedMessages = createCollectedMessagesCollection({
@@ -236,14 +254,9 @@ export class DurableChatClient<
    */
   get messages(): UIMessage[] {
     // Convert MessageRow to UIMessage
-    const rawValues = [...this._collections.messages.values()]
-    console.group('📨 client.messages getter called')
-    console.log('Messages collection size:', this._collections.messages.size)
-    console.log('Raw values:', rawValues)
-    const result = rawValues.map((row) => this.messageRowToUIMessage(row))
-    console.log('Mapped UIMessages:', result)
-    console.groupEnd()
-    return result
+    return [...this._collections.messages.values()].map((row) =>
+      this.messageRowToUIMessage(row)
+    )
   }
 
   /**
@@ -353,6 +366,14 @@ export class DurableChatClient<
   /**
    * Create the unified optimistic action for all message types.
    * Handles user, assistant, and system messages with the same pattern.
+   *
+   * IMPORTANT: We insert into the stream collection (not the messages collection)
+   * because messages is a derived collection from a live query pipeline. Inserting
+   * directly into a derived collection causes TanStack DB reconciliation bugs where
+   * synced data becomes invisible while the optimistic mutation is pending.
+   *
+   * By inserting into the stream collection with the user-message format, the
+   * optimistic row flows through the normal pipeline: stream → collectedMessages → messages.
    */
   private createMessageAction() {
     return createOptimisticAction<MessageActionInput>({
@@ -364,16 +385,27 @@ export class DurableChatClient<
         const seq = (this._optimisticSeq++).toString().padStart(16, '0')
         const optimisticOffset = `zzzzzzzzzzzzzzzz_${seq}`
 
-        this._collections.messages.insert({
-          id: messageId,
-          role,
-          parts: [{ type: 'text' as const, content }],
+        const createdAt = new Date()
+
+        // Insert into stream collection with user-message format.
+        // This flows through the live query pipeline: stream → collectedMessages → messages
+        this._collections.stream.insert({
+          sessionId: this.sessionId,
+          messageId,
           actorId: this.actorId,
           actorType: this.actorType,
-          isComplete: true,
-          startOffset: optimisticOffset,
-          endOffset: optimisticOffset,
-          createdAt: new Date(),
+          chunk: JSON.stringify({
+            type: 'user-message',
+            message: {
+              id: messageId,
+              role,
+              parts: [{ type: 'text' as const, content }],
+              createdAt: createdAt.toISOString(),
+            },
+          }),
+          createdAt: createdAt.toISOString(),
+          seq: 0,
+          offset: optimisticOffset,
         })
       },
       mutationFn: async ({ content, messageId, role, agent }) => {
@@ -386,8 +418,9 @@ export class DurableChatClient<
           ...(agent && { agent }),
         })
 
-        await waitForKey(this._collections.messages, messageId)
-        this.options.onMessagesChange?.(this.messages)
+        // Wait for synced row in stream collection (where we inserted optimistically).
+        // Key format: `${messageId}:${seq}` - user messages have seq=0
+        await waitForKey(this._collections.stream, `${messageId}:0`)
       },
     })
   }
@@ -440,7 +473,7 @@ export class DurableChatClient<
    */
   stop(): void {
     // Cancel any in-flight requests
-    this._abortController?.abort()
+    this._abortController.abort()
 
     // Call stop endpoint
     fetch(`${this.options.proxyUrl}/v1/sessions/${this.sessionId}/stop`, {
@@ -552,17 +585,6 @@ export class DurableChatClient<
     })
   }
 
-  /**
-   * Manually set messages (for hydration or manual override).
-   *
-   * @param messages - Messages to set
-   */
-  setMessagesManually(messages: UIMessage[]): void {
-    // This is primarily for SSR hydration or testing
-    // In production, messages should come from the durable stream
-    this.options.onMessagesChange?.(messages)
-  }
-
   // ═══════════════════════════════════════════════════════════════════════
   // Collections
   // ═══════════════════════════════════════════════════════════════════════
@@ -664,8 +686,6 @@ export class DurableChatClient<
   async connect(): Promise<void> {
     if (this._isConnected) return
 
-    this._abortController = new AbortController()
-
     // Update connection status
     this.updateSessionMeta((meta) =>
       updateConnectionStatus(meta, 'connecting')
@@ -741,7 +761,7 @@ export class DurableChatClient<
    * Disconnect from the stream.
    */
   disconnect(): void {
-    this._abortController?.abort()
+    this._abortController.abort()
     this._isConnected = false
     this._isPaused = false
 
@@ -752,11 +772,16 @@ export class DurableChatClient<
 
   /**
    * Dispose the client and clean up resources.
+   *
+   * Note: We only disconnect here - we don't manually cleanup collections.
+   * All exposed collections could be used by application code via useLiveQuery,
+   * and manual cleanup would error: "Source collection was manually cleaned up
+   * while live query depends on it."
+   *
+   * TanStack DB will GC collections automatically when they have no subscribers.
    */
   dispose(): void {
     this.disconnect()
-    // Clean up database and collections
-    // The database will handle cleanup of collections
   }
 
   // ═══════════════════════════════════════════════════════════════════════
