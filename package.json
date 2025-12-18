@@ -6,12 +6,6 @@
   "description": "Durable stream transport for SSE-based AI apps.",
   "pnpm": {
     "overrides": {
-      "@tanstack/ai": "file:../../TanStack/ai/packages/typescript/ai/tanstack-ai-0.1.0.tgz",
-      "@tanstack/ai-client": "file:../../TanStack/ai/packages/typescript/ai-client/tanstack-ai-client-0.1.0.tgz",
-      "@tanstack/ai-openai": "file:../../TanStack/ai/packages/typescript/ai-openai/tanstack-ai-openai-0.1.0.tgz",
-      "@tanstack/ai-react": "file:../../TanStack/ai/packages/typescript/ai-react/tanstack-ai-react-0.1.0.tgz",
-      "@tanstack/ai-devtools-core": "file:../../TanStack/ai/packages/typescript/ai-devtools/tanstack-ai-devtools-core-0.1.0.tgz",
-      "@tanstack/react-ai-devtools": "file:../../TanStack/ai/packages/typescript/react-ai-devtools/tanstack-react-ai-devtools-0.1.8.tgz",
       "@tanstack/react-start": "1.139.8",
       "@tanstack/react-router": "1.139.7",
       "@tanstack/react-router-devtools": "1.139.7",
@@ -21,10 +15,14 @@
   },
   "scripts": {
     "backend:down": "docker compose -f ./support/docker-compose.yaml down --volumes",
-    "backend:just_up": "docker compose -f ./support/docker-compose.yaml up -d",
     "backend:ps": "docker compose -f ./support/docker-compose.yaml ps",
-    "backend:up": "pnpm backend:down && pnpm backend:just_up",
-    "dev:proxy": "dotenv -- pnpm --filter @electric-sql/transport-proxy dev",
+    "backend:up": "pnpm backend:down && docker compose -f ./support/docker-compose.yaml up -d",
+    "transport-backend:up": "pnpm backend:down && docker compose -f ./support/docker-compose.yaml up -d postgres electric",
+    "transport-backend:down": "docker compose -f ./support/docker-compose.yaml stop postgres electric",
+    "session-backend:up": "pnpm backend:down && docker compose -f ./support/docker-compose.yaml up -d durable-streams",
+    "session-backend:down": "docker compose -f ./support/docker-compose.yaml stop durable-streams",
+    "dev:transport-proxy": "dotenv -- pnpm --filter @electric-sql/transport-proxy dev",
+    "dev:session-proxy": "dotenv -- pnpm --filter @electric-sql/ai-db-proxy dev",
     "dev:demo": "dotenv -- node ./scripts/dev-demo.js",
     "build": "dotenv -- pnpm -r build",
     "clean": "pnpm -r clean",
@@ -46,8 +44,10 @@
     "eslint-plugin-prettier": "^5.5.4",
     "lint-staged": "^16.2.7",
     "prettier": "^3.7.3",
+    "tsdown": "^0.9.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.48.0",
+    "vite": "^7.2.7",
     "vitest": "^2.1.9"
   }
 }

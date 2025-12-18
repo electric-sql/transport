@@ -29,3 +29,17 @@ services:
       - 3000:3000
     depends_on:
       - postgres
+  durable-streams:
+    build:
+      context: ../../../durable-streams/durable-streams
+      dockerfile: ../../electric-sql/transport/support/Dockerfile.durable-streams
+    ports:
+      - 3001:3001
+    environment:
+      PORT: 3001
+      HOST: 0.0.0.0
+    volumes:
+      - durable-streams-data:/app/data
+
+volumes:
+  durable-streams-data:

@@ -1,7 +1,7 @@
 {
-  "name": "@electric-sql/tanstack-ai-transport",
+  "name": "@electric-sql/react-ai-db",
   "version": "0.1.0",
-  "description": "Durable transport adapter for TanStack AI.",
+  "description": "React bindings for durable chat client backed by TanStack DB and Durable Streams.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,20 +23,23 @@
   "author": "ElectricSQL",
   "license": "Apache-2.0",
   "dependencies": {
-    "@electric-sql/transport": "workspace:*"
+    "@electric-sql/ai-db": "workspace:*",
+    "@tanstack/react-db": "workspace:*"
   },
   "devDependencies": {
     "@tanstack/ai": "workspace:*",
-    "@tanstack/ai-client": "workspace:*",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^24.10.0",
-    "@types/react": "^19.2.7",
-    "react": "^19.2.0",
+    "@types/react": "^18.3.0",
+    "jsdom": "^26.1.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.8"
   },
   "peerDependencies": {
     "@tanstack/ai": "*",
-    "@tanstack/ai-client": "*",
-    "react": ">=18"
+    "react": "^18.0.0 || ^19.0.0"
   }
 }

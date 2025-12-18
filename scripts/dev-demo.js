@@ -32,7 +32,7 @@ function discoverDemos() {
 }
 
 const DEMO_PACKAGES = discoverDemos()
-const DEFAULT_DEMO = 'next-openai-app'
+const DEFAULT_DEMO = 'vercel-ai-sdk-durable-transport'
 
 // Get demo name from command line args
 const demoName = process.argv[2] || DEFAULT_DEMO

@@ -1,0 +1,326 @@
+[
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "a845300a-45e0-461e-9e84-20451c100833",
+        "actorId": "bf366f79-41d3-4588-b310-f0598713b4c8",
+        "actorType": "user",
+        "chunk": "{\"type\":\"user-message\",\"message\":{\"id\":\"a845300a-45e0-461e-9e84-20451c100833\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Hello\"}],\"createdAt\":\"2025-12-13T06:16:23.767Z\"}}",
+        "createdAt": "2025-12-13T06:16:23.767Z",
+        "seq": 0
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\"\",\"content\":\"\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.044Z",
+        "seq": 0
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\"Hi\",\"content\":\"Hi\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.049Z",
+        "seq": 1
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" there\",\"content\":\"Hi there\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.078Z",
+        "seq": 2
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\"!\",\"content\":\"Hi there!\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.083Z",
+        "seq": 3
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" How\",\"content\":\"Hi there! How\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.088Z",
+        "seq": 4
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" can\",\"content\":\"Hi there! How can\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.095Z",
+        "seq": 5
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" I\",\"content\":\"Hi there! How can I\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.098Z",
+        "seq": 6
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" assist\",\"content\":\"Hi there! How can I assist\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.103Z",
+        "seq": 7
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" you\",\"content\":\"Hi there! How can I assist you\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.106Z",
+        "seq": 8
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\" today\",\"content\":\"Hi there! How can I assist you today\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.106Z",
+        "seq": 9
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"delta\":\"?\",\"content\":\"Hi there! How can I assist you today?\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:16:25.107Z",
+        "seq": 10
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "5b6a7872-7c6a-4530-8a34-0898e70e782c",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"done\",\"id\":\"resp_096cfac27d0ccedf00693d04b876988195af0ffbe25ee5a84b\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606585033,\"usage\":{\"promptTokens\":149,\"completionTokens\":11,\"totalTokens\":160},\"finishReason\":\"stop\"}",
+        "createdAt": "2025-12-13T06:16:25.254Z",
+        "seq": 11
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "f289b345-c4ab-45fd-8b29-7b39e25e3c5d",
+        "actorId": "db8a74d0-6686-4c46-827a-96f30131bda0",
+        "actorType": "user",
+        "chunk": "{\"type\":\"user-message\",\"message\":{\"id\":\"f289b345-c4ab-45fd-8b29-7b39e25e3c5d\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"I don't know\"}],\"createdAt\":\"2025-12-13T06:18:42.367Z\"}}",
+        "createdAt": "2025-12-13T06:18:42.367Z",
+        "seq": 0
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\"\",\"content\":\"\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.495Z",
+        "seq": 0
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\"No\",\"content\":\"No\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.501Z",
+        "seq": 1
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" problem\",\"content\":\"No problem\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.508Z",
+        "seq": 2
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\"!\",\"content\":\"No problem!\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.509Z",
+        "seq": 3
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" If\",\"content\":\"No problem! If\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.511Z",
+        "seq": 4
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" you\",\"content\":\"No problem! If you\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.512Z",
+        "seq": 5
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" have\",\"content\":\"No problem! If you have\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.513Z",
+        "seq": 6
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" any\",\"content\":\"No problem! If you have any\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.514Z",
+        "seq": 7
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" questions\",\"content\":\"No problem! If you have any questions\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.515Z",
+        "seq": 8
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" or\",\"content\":\"No problem! If you have any questions or\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.516Z",
+        "seq": 9
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" need\",\"content\":\"No problem! If you have any questions or need\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.517Z",
+        "seq": 10
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" help\",\"content\":\"No problem! If you have any questions or need help\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.518Z",
+        "seq": 11
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" with\",\"content\":\"No problem! If you have any questions or need help with\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.519Z",
+        "seq": 12
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" anything\",\"content\":\"No problem! If you have any questions or need help with anything\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.520Z",
+        "seq": 13
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" specific\",\"content\":\"No problem! If you have any questions or need help with anything specific\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.521Z",
+        "seq": 14
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\",\",\"content\":\"No problem! If you have any questions or need help with anything specific,\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.521Z",
+        "seq": 15
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" feel\",\"content\":\"No problem! If you have any questions or need help with anything specific, feel\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.522Z",
+        "seq": 16
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" free\",\"content\":\"No problem! If you have any questions or need help with anything specific, feel free\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.523Z",
+        "seq": 17
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" to\",\"content\":\"No problem! If you have any questions or need help with anything specific, feel free to\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.524Z",
+        "seq": 18
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\" ask\",\"content\":\"No problem! If you have any questions or need help with anything specific, feel free to ask\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.525Z",
+        "seq": 19
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"content\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"delta\":\".\",\"content\":\"No problem! If you have any questions or need help with anything specific, feel free to ask.\",\"role\":\"assistant\"}",
+        "createdAt": "2025-12-13T06:18:43.526Z",
+        "seq": 20
+    },
+    {
+        "sessionId": "tanstack-durable-demo",
+        "messageId": "6e475aba-f338-4b65-92b5-cc26f9213282",
+        "actorId": "openai-chat",
+        "actorType": "agent",
+        "chunk": "{\"type\":\"done\",\"id\":\"resp_01f89d6fa6d68d1200693d054289c08195add05574bd3ee377\",\"model\":\"gpt-4o-2024-08-06\",\"timestamp\":1765606723484,\"usage\":{\"promptTokens\":151,\"completionTokens\":21,\"totalTokens\":172},\"finishReason\":\"stop\"}",
+        "createdAt": "2025-12-13T06:18:43.527Z",
+        "seq": 21
+    }
+]
