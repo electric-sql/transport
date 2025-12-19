@@ -15,6 +15,7 @@ import type { Collection } from '@tanstack/db'
 import type { ToolCallRow } from '../types'
 import { extractToolCalls } from '../materialize'
 import type { CollectedMessageRows } from './messages'
+import type { ChunkRow } from '../schema'
 
 // ============================================================================
 // Tool Calls Collection

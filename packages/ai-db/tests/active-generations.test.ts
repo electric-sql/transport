@@ -7,9 +7,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
-  createMockStreamCollection,
+  createMockChunksCollection,
   loadTestData,
-  addOffsets,
   getMessageRows,
   flushPromises,
   TEST_MESSAGE_IDS,
@@ -19,29 +18,30 @@ import {
   createMessagesCollection,
 } from '../src/collections/messages'
 import { createActiveGenerationsCollection } from '../src/collections/active-generations'
-import type { StreamRowWithOffset, MessageRow, ActiveGenerationRow } from '../src/types'
+import type { ChunkRow } from '../src/schema'
+import type { MessageRow, ActiveGenerationRow } from '../src/types'
 import type { Collection } from '@tanstack/db'
 
 describe('active generations collection', () => {
   const testData = loadTestData()
 
   // Collections to be set up in beforeEach
-  let streamCollection: Collection<StreamRowWithOffset>
-  let controller: ReturnType<typeof createMockStreamCollection>['controller']
+  let chunksCollection: Collection<ChunkRow>
+  let controller: ReturnType<typeof createMockChunksCollection>['controller']
   let messagesCollection: Collection<MessageRow>
   let activeGenerations: Collection<ActiveGenerationRow>
 
   beforeEach(() => {
-    // Create mock stream collection
-    const mock = createMockStreamCollection('test-session')
-    streamCollection = mock.collection
+    // Create mock chunks collection
+    const mock = createMockChunksCollection('test-session')
+    chunksCollection = mock.collection
     controller = mock.controller
 
-    // Create the pipeline: stream -> collectedMessages -> messages -> activeGenerations
+    // Create the pipeline: chunks -> collectedMessages -> messages -> activeGenerations
     // Note: derived collections use startSync: true, so they start syncing immediately
     const collectedMessagesCollection = createCollectedMessagesCollection({
       sessionId: 'test-session',
-      streamCollection,
+      chunksCollection,
     })
 
     messagesCollection = createMessagesCollection({
@@ -54,8 +54,8 @@ describe('active generations collection', () => {
       messagesCollection,
     })
 
-    // Initialize stream collection
-    streamCollection.preload()
+    // Initialize chunks collection
+    chunksCollection.preload()
     controller.markReady()
   })
 
@@ -71,7 +71,7 @@ describe('active generations collection', () => {
 
     it('should not track user messages as active generations', async () => {
       // Emit a complete user message
-      const userRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0)
+      const userRows = getMessageRows(testData, TEST_MESSAGE_IDS.USER_1)
       controller.emit(userRows)
       await flushPromises()
 
@@ -81,11 +81,11 @@ describe('active generations collection', () => {
 
     it('should track an assistant message while streaming', async () => {
       // First emit user message
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       // Emit first assistant chunk (not done)
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       controller.emit([assistantRows[0]])
       await flushPromises()
 
@@ -98,11 +98,11 @@ describe('active generations collection', () => {
 
     it('should update active generation as deltas arrive', async () => {
       // Set up user message
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       // Get assistant rows
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
 
       // Emit chunks one by one (excluding last done chunk)
       for (let i = 0; i < assistantRows.length - 1; i++) {
@@ -118,11 +118,11 @@ describe('active generations collection', () => {
 
     it('should remove active generation when done chunk arrives', async () => {
       // Set up user message
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       // Emit all assistant chunks including done
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       controller.emit(assistantRows)
       await flushPromises()
 
@@ -138,11 +138,11 @@ describe('active generations collection', () => {
   describe('multiple concurrent generations', () => {
     it('should track multiple incomplete assistant messages', async () => {
       // Create custom test data with two concurrent incomplete generations
-      const gen1Row: StreamRowWithOffset = {
-        sessionId: 'test-session',
+      const gen1Row: ChunkRow = {
+        id: 'gen-1:0',
         messageId: 'gen-1',
         actorId: 'agent-1',
-        actorType: 'agent',
+        role: 'assistant',
         chunk: JSON.stringify({
           type: 'content',
           delta: 'Hello',
@@ -154,14 +154,13 @@ describe('active generations collection', () => {
         }),
         createdAt: new Date().toISOString(),
         seq: 0,
-        offset: 'offset-0000000001',
       }
 
-      const gen2Row: StreamRowWithOffset = {
-        sessionId: 'test-session',
+      const gen2Row: ChunkRow = {
+        id: 'gen-2:0',
         messageId: 'gen-2',
         actorId: 'agent-2',
-        actorType: 'agent',
+        role: 'assistant',
         chunk: JSON.stringify({
           type: 'content',
           delta: 'World',
@@ -173,7 +172,6 @@ describe('active generations collection', () => {
         }),
         createdAt: new Date().toISOString(),
         seq: 0,
-        offset: 'offset-0000000002',
       }
 
       // Emit both generation starts
@@ -188,11 +186,11 @@ describe('active generations collection', () => {
 
     it('should remove only the completed generation', async () => {
       // Create two incomplete generations
-      const gen1Content: StreamRowWithOffset = {
-        sessionId: 'test-session',
+      const gen1Content: ChunkRow = {
+        id: 'gen-1:0',
         messageId: 'gen-1',
         actorId: 'agent-1',
-        actorType: 'agent',
+        role: 'assistant',
         chunk: JSON.stringify({
           type: 'content',
           delta: 'Hello',
@@ -204,14 +202,13 @@ describe('active generations collection', () => {
         }),
         createdAt: new Date().toISOString(),
         seq: 0,
-        offset: 'offset-0000000001',
       }
 
-      const gen2Content: StreamRowWithOffset = {
-        sessionId: 'test-session',
+      const gen2Content: ChunkRow = {
+        id: 'gen-2:0',
         messageId: 'gen-2',
         actorId: 'agent-2',
-        actorType: 'agent',
+        role: 'assistant',
         chunk: JSON.stringify({
           type: 'content',
           delta: 'World',
@@ -223,7 +220,6 @@ describe('active generations collection', () => {
         }),
         createdAt: new Date().toISOString(),
         seq: 0,
-        offset: 'offset-0000000002',
       }
 
       controller.emit([gen1Content, gen2Content])
@@ -232,11 +228,11 @@ describe('active generations collection', () => {
       expect(activeGenerations.size).toBe(2)
 
       // Complete gen-1 with a done chunk
-      const gen1Done: StreamRowWithOffset = {
-        sessionId: 'test-session',
+      const gen1Done: ChunkRow = {
+        id: 'gen-1:1',
         messageId: 'gen-1',
         actorId: 'agent-1',
-        actorType: 'agent',
+        role: 'assistant',
         chunk: JSON.stringify({
           type: 'done',
           id: 'gen-1',
@@ -246,7 +242,6 @@ describe('active generations collection', () => {
         }),
         createdAt: new Date().toISOString(),
         seq: 1,
-        offset: 'offset-0000000003',
       }
 
       controller.emit([gen1Done])
@@ -266,7 +261,7 @@ describe('active generations collection', () => {
   describe('active generation properties', () => {
     it('should have correct messageId', async () => {
       // Emit incomplete assistant message
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 0)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       controller.emit([assistantRows[0]])
       await flushPromises()
 
@@ -275,7 +270,7 @@ describe('active generations collection', () => {
     })
 
     it('should have correct actorId', async () => {
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 0)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       controller.emit([assistantRows[0]])
       await flushPromises()
 
@@ -285,7 +280,7 @@ describe('active generations collection', () => {
     })
 
     it('should have startedAt timestamp', async () => {
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 0)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       controller.emit([assistantRows[0]])
       await flushPromises()
 
@@ -304,7 +299,7 @@ describe('active generations collection', () => {
       expect(activeGenerations.size > 0).toBe(false)
 
       // Start streaming
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 0)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       controller.emit([assistantRows[0]])
       await flushPromises()
 
@@ -330,32 +325,32 @@ describe('active generations collection', () => {
       const assistantRows2 = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_2)
 
       // 1. User sends message - no active generation
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
       expect(activeGenerations.size).toBe(0)
 
       // 2. Assistant starts responding - active generation
-      controller.emit(addOffsets([assistantRows1[0]], 100))
+      controller.emit([assistantRows1[0]])
       await flushPromises()
       expect(activeGenerations.size).toBe(1)
 
       // 3. Assistant finishes - no active generation
-      controller.emit(addOffsets(assistantRows1.slice(1), 101))
+      controller.emit(assistantRows1.slice(1))
       await flushPromises()
       expect(activeGenerations.size).toBe(0)
 
       // 4. User sends another message - no active generation
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_2), 200))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_2))
       await flushPromises()
       expect(activeGenerations.size).toBe(0)
 
       // 5. Second assistant response starts - active generation
-      controller.emit(addOffsets([assistantRows2[0]], 300))
+      controller.emit([assistantRows2[0]])
       await flushPromises()
       expect(activeGenerations.size).toBe(1)
 
       // 6. Second assistant finishes - no active generation
-      controller.emit(addOffsets(assistantRows2.slice(1), 301))
+      controller.emit(assistantRows2.slice(1))
       await flushPromises()
       expect(activeGenerations.size).toBe(0)
     })

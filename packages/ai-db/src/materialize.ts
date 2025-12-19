@@ -1,5 +1,5 @@
 /**
- * Message materialization from stream rows.
+ * Message materialization from stream chunks.
  *
  * Handles two formats:
  * 1. User messages: Single row with {type: 'user-message', message: UIMessage}
@@ -17,8 +17,8 @@ import type {
   DoneStreamChunk,
   ApprovalRequestedStreamChunk,
 } from '@tanstack/ai'
+import type { ChunkRow } from './schema'
 import type {
-  StreamRowWithOffset,
   MessageRow,
   MessageRole,
   ToolCallRow,
@@ -85,7 +85,7 @@ export function parseChunk(chunkJson: string): DurableStreamChunk | null {
  * User messages are stored as complete UIMessage objects.
  */
 function materializeUserMessage(
-  row: StreamRowWithOffset,
+  row: ChunkRow,
   chunk: UserMessageChunk
 ): MessageRow {
   const { message } = chunk
@@ -95,10 +95,7 @@ function materializeUserMessage(
     role: message.role as MessageRole,
     parts: message.parts,
     actorId: row.actorId,
-    actorType: row.actorType,
     isComplete: true,
-    startOffset: row.offset,
-    endOffset: row.offset,
     createdAt: message.createdAt ? new Date(message.createdAt) : new Date(row.createdAt),
   }
 }
@@ -107,10 +104,9 @@ function materializeUserMessage(
  * Materialize an assistant message from streamed chunks.
  * Uses TanStack AI's StreamProcessor to process chunks.
  */
-function materializeAssistantMessage(rows: StreamRowWithOffset[]): MessageRow {
+function materializeAssistantMessage(rows: ChunkRow[]): MessageRow {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq)
   const first = sorted[0]
-  const last = sorted[sorted.length - 1]
 
   // Create processor and start assistant message
   const processor = new StreamProcessor()
@@ -143,6 +139,12 @@ function materializeAssistantMessage(rows: StreamRowWithOffset[]): MessageRow {
     if (isDoneChunk(chunk as StreamChunk)) {
       isComplete = true
     }
+
+    // Also check for stop/error chunks (stop is from our proxy, not in TanStack AI types)
+    const chunkType = (chunk as { type: string }).type
+    if (chunkType === 'stop' || chunkType === 'error') {
+      isComplete = true
+    }
   }
 
   // Finalize if complete
@@ -156,28 +158,25 @@ function materializeAssistantMessage(rows: StreamRowWithOffset[]): MessageRow {
 
   return {
     id: first.messageId,
-    role: 'assistant',
+    role: first.role as MessageRole,
     parts: message?.parts ?? [],
     actorId: first.actorId,
-    actorType: first.actorType,
     isComplete,
-    startOffset: first.offset,
-    endOffset: isComplete ? last.offset : null,
     createdAt: new Date(first.createdAt),
   }
 }
 
 /**
- * Materialize a MessageRow from collected stream rows.
+ * Materialize a MessageRow from collected chunk rows.
  *
  * Handles two formats:
  * 1. User messages: Single row with {type: 'user-message', message: UIMessage}
  * 2. Assistant messages: Multiple rows with TanStack AI StreamChunks
  *
- * @param rows - Stream rows for a single message
+ * @param rows - Chunk rows for a single message
  * @returns Materialized message row
  */
-export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
+export function materializeMessage(rows: ChunkRow[]): MessageRow {
   if (!rows || rows.length === 0) {
     throw new Error('Cannot materialize message from empty rows')
   }
@@ -204,12 +203,12 @@ export function materializeMessage(rows: StreamRowWithOffset[]): MessageRow {
 // ============================================================================
 
 /**
- * Extract tool calls from stream rows.
+ * Extract tool calls from chunk rows.
  *
- * @param rows - Stream rows to extract from
+ * @param rows - Chunk rows to extract from
  * @returns Array of tool call rows
  */
-export function extractToolCalls(rows: StreamRowWithOffset[]): ToolCallRow[] {
+export function extractToolCalls(rows: ChunkRow[]): ToolCallRow[] {
   const toolCallMap = new Map<string, ToolCallRow>()
 
   for (const row of rows) {
@@ -283,12 +282,12 @@ export function extractToolCalls(rows: StreamRowWithOffset[]): ToolCallRow[] {
 // ============================================================================
 
 /**
- * Extract tool results from stream rows.
+ * Extract tool results from chunk rows.
  *
- * @param rows - Stream rows to extract from
+ * @param rows - Chunk rows to extract from
  * @returns Array of tool result rows
  */
-export function extractToolResults(rows: StreamRowWithOffset[]): ToolResultRow[] {
+export function extractToolResults(rows: ChunkRow[]): ToolResultRow[] {
   const results: ToolResultRow[] = []
 
   for (const row of rows) {
@@ -320,12 +319,12 @@ export function extractToolResults(rows: StreamRowWithOffset[]): ToolResultRow[]
 // ============================================================================
 
 /**
- * Extract approvals from stream rows.
+ * Extract approvals from chunk rows.
  *
- * @param rows - Stream rows to extract from
+ * @param rows - Chunk rows to extract from
  * @returns Array of approval rows
  */
-export function extractApprovals(rows: StreamRowWithOffset[]): ApprovalRow[] {
+export function extractApprovals(rows: ChunkRow[]): ApprovalRow[] {
   const approvalMap = new Map<string, ApprovalRow>()
 
   for (const row of rows) {
@@ -369,7 +368,7 @@ export function extractApprovals(rows: StreamRowWithOffset[]): ApprovalRow[] {
  * Check if message rows indicate a complete message.
  * User messages are always complete. Assistant messages are complete if they have a 'done' chunk.
  */
-function isMessageComplete(rows: StreamRowWithOffset[]): boolean {
+function isMessageComplete(rows: ChunkRow[]): boolean {
   if (rows.length === 0) return false
 
   const sorted = [...rows].sort((a, b) => a.seq - b.seq)
@@ -380,7 +379,7 @@ function isMessageComplete(rows: StreamRowWithOffset[]): boolean {
     return true
   }
 
-  // For assistant messages, check for done or message-end chunk
+  // For assistant messages, check for done, stop, or error chunk
   for (const row of rows) {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
@@ -389,6 +388,11 @@ function isMessageComplete(rows: StreamRowWithOffset[]): boolean {
 
     const streamChunk = chunk as StreamChunk
     if (isDoneChunk(streamChunk)) {
+      return true
+    }
+    // Also check for stop/error chunks (stop is from our proxy, not in TanStack AI types)
+    const chunkType = (chunk as { type: string }).type
+    if (chunkType === 'stop' || chunkType === 'error') {
       return true
     }
     // Also check legacy message-end for backward compatibility
@@ -407,7 +411,7 @@ function isMessageComplete(rows: StreamRowWithOffset[]): boolean {
  * @returns Array of active generation rows
  */
 export function detectActiveGenerations(
-  rowsByMessage: Map<string, StreamRowWithOffset[]>
+  rowsByMessage: Map<string, ChunkRow[]>
 ): ActiveGenerationRow[] {
   const activeGenerations: ActiveGenerationRow[] = []
 
@@ -426,7 +430,7 @@ export function detectActiveGenerations(
       messageId,
       actorId: first.actorId,
       startedAt: new Date(first.createdAt),
-      lastChunkOffset: last.offset,
+      lastChunkSeq: last.seq,
       lastChunkAt: new Date(last.createdAt),
     })
   }
@@ -439,15 +443,15 @@ export function detectActiveGenerations(
 // ============================================================================
 
 /**
- * Group stream rows by messageId.
+ * Group chunk rows by messageId.
  *
- * @param rows - Stream rows to group
+ * @param rows - Chunk rows to group
  * @returns Map of messageId to rows
  */
 export function groupRowsByMessage(
-  rows: StreamRowWithOffset[]
-): Map<string, StreamRowWithOffset[]> {
-  const grouped = new Map<string, StreamRowWithOffset[]>()
+  rows: ChunkRow[]
+): Map<string, ChunkRow[]> {
+  const grouped = new Map<string, ChunkRow[]>()
 
   for (const row of rows) {
     const existing = grouped.get(row.messageId)
@@ -462,21 +466,26 @@ export function groupRowsByMessage(
 }
 
 /**
- * Materialize all messages from stream rows.
+ * Materialize all messages from chunk rows.
  *
- * @param rows - All stream rows
- * @returns Array of materialized message rows, sorted by startOffset
+ * @param rows - All chunk rows
+ * @returns Array of materialized message rows, sorted by createdAt
  */
-export function materializeAllMessages(rows: StreamRowWithOffset[]): MessageRow[] {
+export function materializeAllMessages(rows: ChunkRow[]): MessageRow[] {
   const grouped = groupRowsByMessage(rows)
   const messages: MessageRow[] = []
 
   for (const [, messageRows] of grouped) {
-    messages.push(materializeMessage(messageRows))
+    try {
+      messages.push(materializeMessage(messageRows))
+    } catch (error) {
+      // Skip invalid messages but log for debugging
+      console.warn('Failed to materialize message:', error)
+    }
   }
 
-  // Sort by startOffset for chronological order
-  messages.sort((a, b) => a.startOffset.localeCompare(b.startOffset))
+  // Sort by createdAt for chronological order
+  messages.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 
   return messages
 }
@@ -505,7 +514,7 @@ export function extractTextContent(message: { parts: Array<{ type: string; text?
  * @returns Whether the message is from a user
  */
 export function isUserMessage(row: MessageRow): boolean {
-  return row.role === 'user' || row.actorType === 'user'
+  return row.role === 'user'
 }
 
 /**
@@ -515,5 +524,5 @@ export function isUserMessage(row: MessageRow): boolean {
  * @returns Whether the message is from an assistant
  */
 export function isAssistantMessage(row: MessageRow): boolean {
-  return row.role === 'assistant' || row.actorType === 'agent'
+  return row.role === 'assistant'
 }

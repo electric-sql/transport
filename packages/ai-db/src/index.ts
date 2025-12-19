@@ -48,6 +48,24 @@
 export { DurableChatClient, createDurableChatClient } from './client'
 
 // ============================================================================
+// Schema (STATE-PROTOCOL)
+// ============================================================================
+
+export {
+  sessionStateSchema,
+  chunkValueSchema,
+  presenceValueSchema,
+  agentValueSchema,
+  type SessionStateSchema,
+  type ChunkValue,
+  type ChunkRow,
+  type PresenceValue,
+  type PresenceRow,
+  type AgentValue,
+  type AgentRow,
+} from './schema'
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -91,6 +109,8 @@ export type {
   // Configuration types
   DurableChatClientOptions,
   DurableSessionStreamConfig,
+  SessionDBConfig,
+  LiveMode,
 
   // Input types
   ToolResultInput,
@@ -102,19 +122,14 @@ export type {
 } from './types'
 
 // ============================================================================
-// Schemas (Zod)
-// ============================================================================
-
-export { streamRowSchema, streamRowWithOffsetSchema } from './types'
-
-// ============================================================================
-// Collection Configuration
+// Session DB Factory
 // ============================================================================
 
 export {
-  durableSessionStreamOptions,
-  getDeduplicationKey,
-  getStreamRowKey,
+  createSessionDB,
+  getChunkKey,
+  parseChunkKey,
+  type SessionDB,
 } from './collection'
 
 export {
@@ -126,7 +141,6 @@ export {
   createCollectedMessagesCollection,
   createMessagesCollection,
   createMessagesPipeline,
-  waitForKey,
   type CollectedMessageRows,
   type CollectedMessagesCollectionOptions,
   type MessagesCollectionOptions,

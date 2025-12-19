@@ -30,7 +30,7 @@ export function createToolResultRoutes(protocol: AIDBSessionProtocol) {
       // Get session
       const stream = await protocol.getOrCreateSession(sessionId)
 
-      // Write tool result
+      // Write tool result (with optional txid for client sync confirmation)
       await protocol.writeToolResult(
         stream,
         sessionId,
@@ -38,7 +38,8 @@ export function createToolResultRoutes(protocol: AIDBSessionProtocol) {
         actorId,
         body.toolCallId,
         body.output,
-        body.error ?? null
+        body.error ?? null,
+        body.txid
       )
 
       return new Response(null, { status: 204 })

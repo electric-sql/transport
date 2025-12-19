@@ -6,7 +6,9 @@
 
 import { createCollection } from '@tanstack/db'
 import type { Collection, SyncConfig, ChangeMessage } from '@tanstack/db'
-import type { StreamRowWithOffset, StreamRow } from '../../src/types'
+import type { ChunkRow, PresenceRow, AgentRow } from '../../src/schema'
+import type { SessionDB } from '../../src/collection'
+import type { StreamRow } from '../../src/types'
 import testDataJson from './test-data.json'
 
 // ============================================================================
@@ -14,58 +16,58 @@ import testDataJson from './test-data.json'
 // ============================================================================
 
 /**
- * Mock controller for controlling stream emissions in tests.
+ * Mock controller for controlling chunk emissions in tests.
  */
-export interface MockStreamController {
+export interface MockChunksController {
   /** Emit rows to the collection as inserts */
-  emit: (rows: StreamRowWithOffset[]) => void
-  /** Mark stream as ready (initial sync complete) */
+  emit: (rows: ChunkRow[]) => void
+  /** Mark collection as ready (initial sync complete) */
   markReady: () => void
   /** Get low-level sync functions for direct control */
   utils: {
     begin: () => void
-    write: (change: ChangeMessage<StreamRowWithOffset>) => void
+    write: (change: ChangeMessage<ChunkRow>) => void
     commit: () => void
     markReady: () => void
   }
 }
 
 // ============================================================================
-// Mock Stream Collection Factory
+// Mock Chunks Collection Factory
 // ============================================================================
 
 /**
- * Creates a mock stream collection for testing.
+ * Creates a mock chunks collection for testing.
  *
- * This mimics the real durableSessionStreamOptions but with controlled sync.
+ * This mimics the real stream-db collection but with controlled sync.
  * Uses the same pattern as TanStack DB's mockSyncCollectionOptions.
  */
-export function createMockStreamCollection(
+export function createMockChunksCollection(
   sessionId: string
 ): {
-  collection: Collection<StreamRowWithOffset>
-  controller: MockStreamController
+  collection: Collection<ChunkRow>
+  controller: MockChunksController
 } {
   let begin!: () => void
-  let write!: (change: ChangeMessage<StreamRowWithOffset>) => void
+  let write!: (change: ChangeMessage<ChunkRow>) => void
   let commit!: () => void
   let markReadyFn!: () => void
 
-  const sync: SyncConfig<StreamRowWithOffset>['sync'] = (params) => {
+  const sync: SyncConfig<ChunkRow>['sync'] = (params) => {
     begin = params.begin
     write = params.write
     commit = params.commit
     markReadyFn = params.markReady
   }
 
-  const collection = createCollection<StreamRowWithOffset>({
-    id: `test-session-stream:${sessionId}`,
-    getKey: (row) => `${row.messageId}:${row.seq}`,
+  const collection = createCollection<ChunkRow>({
+    id: `test-chunks:${sessionId}`,
+    getKey: (row) => row.id,
     sync: { sync },
   })
 
-  const controller: MockStreamController = {
-    emit: (rows: StreamRowWithOffset[]) => {
+  const controller: MockChunksController = {
+    emit: (rows: ChunkRow[]) => {
       begin()
       for (const row of rows) {
         write({ type: 'insert', value: row })
@@ -87,6 +89,179 @@ export function createMockStreamCollection(
 }
 
 // ============================================================================
+// Generic Mock Collection Factory
+// ============================================================================
+
+/**
+ * Generic mock controller for controlling any collection in tests.
+ */
+export interface MockCollectionController<T extends object> {
+  /** Emit rows to the collection as inserts */
+  emit: (rows: T[]) => void
+  /** Mark collection as ready (initial sync complete) */
+  markReady: () => void
+  /** Get low-level sync functions for direct control */
+  utils: {
+    begin: () => void
+    write: (change: ChangeMessage<T>) => void
+    commit: () => void
+    markReady: () => void
+  }
+}
+
+/**
+ * Creates a generic mock collection for testing.
+ */
+function createMockCollection<T extends object>(
+  id: string,
+  getKey: (row: T) => string
+): {
+  collection: Collection<T>
+  controller: MockCollectionController<T>
+} {
+  let begin!: () => void
+  let write!: (change: ChangeMessage<T>) => void
+  let commit!: () => void
+  let markReadyFn!: () => void
+
+  const sync: SyncConfig<T>['sync'] = (params) => {
+    begin = params.begin
+    write = params.write
+    commit = params.commit
+    markReadyFn = params.markReady
+  }
+
+  const collection = createCollection<T>({
+    id,
+    getKey,
+    sync: { sync },
+  })
+
+  const controller: MockCollectionController<T> = {
+    emit: (rows: T[]) => {
+      begin()
+      for (const row of rows) {
+        write({ type: 'insert', value: row })
+      }
+      commit()
+    },
+    markReady: () => {
+      markReadyFn()
+    },
+    utils: {
+      begin: () => begin(),
+      write: (change) => write(change),
+      commit: () => commit(),
+      markReady: () => markReadyFn(),
+    },
+  }
+
+  return { collection, controller }
+}
+
+// ============================================================================
+// Mock SessionDB Factory
+// ============================================================================
+
+/**
+ * Controllers for all collections in a mock SessionDB.
+ */
+export interface MockSessionDBControllers {
+  chunks: MockChunksController
+  presence: MockCollectionController<PresenceRow>
+  agents: MockCollectionController<AgentRow>
+}
+
+/**
+ * Creates a mock SessionDB for testing.
+ *
+ * This creates a complete mock SessionDB with all three root collections
+ * (chunks, presence, agents) controlled by test code. This replaces the
+ * previous `chunksCollection` injection pattern.
+ *
+ * @example
+ * ```typescript
+ * const { sessionDB, controllers } = createMockSessionDB('test-session')
+ *
+ * const client = new DurableChatClient({
+ *   sessionId: 'test-session',
+ *   proxyUrl: 'http://localhost:4000',
+ *   sessionDB, // Inject mock SessionDB
+ * })
+ *
+ * await client.connect()
+ *
+ * // Emit test data via controllers
+ * controllers.chunks.emit(testChunkRows)
+ * controllers.chunks.markReady()
+ * ```
+ */
+export function createMockSessionDB(sessionId: string): {
+  sessionDB: SessionDB
+  controllers: MockSessionDBControllers
+} {
+  // Create mock collections for all three root collections
+  const {
+    collection: chunksCollection,
+    controller: chunksController,
+  } = createMockChunksCollection(sessionId)
+
+  const {
+    collection: presenceCollection,
+    controller: presenceController,
+  } = createMockCollection<PresenceRow>(
+    `test-presence:${sessionId}`,
+    (row) => row.actorId
+  )
+
+  const {
+    collection: agentsCollection,
+    controller: agentsController,
+  } = createMockCollection<AgentRow>(
+    `test-agents:${sessionId}`,
+    (row) => row.agentId
+  )
+
+  // Create mock SessionDB object
+  const sessionDB: SessionDB = {
+    collections: {
+      chunks: chunksCollection,
+      presence: presenceCollection,
+      agents: agentsCollection,
+    },
+    // Stream is not used in tests
+    stream: null as any,
+    // Preload triggers collection preload and marks them ready
+    preload: async () => {
+      // Trigger preload on collections (this sets up the sync callbacks)
+      chunksCollection.preload()
+      presenceCollection.preload()
+      agentsCollection.preload()
+      // Mark all collections as ready
+      chunksController.markReady()
+      presenceController.markReady()
+      agentsController.markReady()
+    },
+    // Close is a no-op in tests
+    close: () => {},
+    // Utils for awaiting txids
+    utils: {
+      // Resolve immediately in tests (no real sync)
+      awaitTxId: async () => {},
+    },
+  }
+
+  return {
+    sessionDB,
+    controllers: {
+      chunks: chunksController,
+      presence: presenceController,
+      agents: agentsController,
+    },
+  }
+}
+
+// ============================================================================
 // Test Data Utilities
 // ============================================================================
 
@@ -99,34 +274,47 @@ export function loadTestData(): StreamRow[] {
 }
 
 /**
- * Add offset field to stream rows (simulating what the sync layer does).
+ * Convert legacy StreamRow to ChunkRow format.
  *
- * @param rows - Stream rows without offset
- * @param startOffset - Starting offset number
- * @returns Stream rows with offset field added
+ * Transforms:
+ * - `actorType: 'user' | 'agent'` -> `role: 'user' | 'assistant'`
+ * - Adds `id: ${messageId}:${seq}` (the primary key)
+ * - Removes `sessionId` (not in ChunkRow)
  */
-export function addOffsets(
-  rows: StreamRow[],
-  startOffset: number = 0
-): StreamRowWithOffset[] {
-  return rows.map((row, index) => ({
-    ...row,
-    offset: `offset-${String(startOffset + index).padStart(10, '0')}`,
-  }))
+export function streamRowToChunkRow(row: StreamRow): ChunkRow {
+  const role = row.actorType === 'user' ? 'user' : 'assistant'
+  return {
+    id: `${row.messageId}:${row.seq}`,
+    messageId: row.messageId,
+    actorId: row.actorId,
+    role,
+    chunk: row.chunk,
+    seq: row.seq,
+    createdAt: row.createdAt,
+  }
 }
 
 /**
- * Get rows for a specific message from test data.
+ * Convert an array of legacy StreamRows to ChunkRows.
+ */
+export function streamRowsToChunkRows(rows: StreamRow[]): ChunkRow[] {
+  return rows.map(streamRowToChunkRow)
+}
+
+/**
+ * Get rows for a specific message from test data as ChunkRows.
  *
- * @param testData - All test data rows
+ * @param testData - All test data rows (StreamRow format)
  * @param messageId - Message ID to filter by
- * @returns Rows for the specified message
+ * @returns ChunkRows for the specified message
  */
 export function getMessageRows(
   testData: StreamRow[],
   messageId: string
-): StreamRow[] {
-  return testData.filter((row) => row.messageId === messageId)
+): ChunkRow[] {
+  return testData
+    .filter((row) => row.messageId === messageId)
+    .map(streamRowToChunkRow)
 }
 
 /**

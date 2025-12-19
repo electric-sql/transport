@@ -1,10 +1,13 @@
 /**
  * Messages collection - two-stage derived pipeline.
  *
- * Stage 1: collectedMessages - groups stream rows by messageId using collect()
+ * Stage 1: collectedMessages - groups chunk rows by messageId using collect()
  * Stage 2: messages - materializes MessageRow objects using fn.select()
  *
  * This follows the pattern: aggregate first → materialize second
+ *
+ * CRITICAL: Materialization happens INSIDE fn.select(). No imperative code
+ * outside this pattern.
  */
 
 import {
@@ -14,7 +17,8 @@ import {
   minStr,
 } from '@tanstack/db'
 import type { Collection } from '@tanstack/db'
-import type { StreamRowWithOffset, MessageRow } from '../types'
+import type { ChunkRow } from '../schema'
+import type { MessageRow } from '../types'
 import { materializeMessage } from '../materialize'
 
 // ============================================================================
@@ -27,7 +31,7 @@ import { materializeMessage } from '../materialize'
  */
 export interface CollectedMessageRows {
   messageId: string
-  rows: StreamRowWithOffset[]
+  rows: ChunkRow[]
   /**
    * The earliest createdAt timestamp (ISO 8601 string) among collected rows.
    * Used for ordering messages chronologically.
@@ -49,12 +53,12 @@ export interface CollectedMessageRows {
 export interface CollectedMessagesCollectionOptions {
   /** Session identifier */
   sessionId: string
-  /** Stream collection to derive from */
-  streamCollection: Collection<StreamRowWithOffset>
+  /** Chunks collection from stream-db */
+  chunksCollection: Collection<ChunkRow>
 }
 
 /**
- * Creates the Stage 1 collection: groups stream rows by messageId.
+ * Creates the Stage 1 collection: groups chunk rows by messageId.
  *
  * This is an intermediate collection - consumers should use the
  * messages collection (Stage 2) which materializes the rows.
@@ -62,24 +66,24 @@ export interface CollectedMessagesCollectionOptions {
 export function createCollectedMessagesCollection(
   options: CollectedMessagesCollectionOptions
 ): Collection<CollectedMessageRows> {
-  const { streamCollection } = options
+  const { chunksCollection } = options
 
   // Use config object form with startSync: true to ensure the collection
   // starts syncing immediately upon creation, providing demand for upstream data
   const collection = createLiveQueryCollection({
     query: (q) =>
       q
-        .from({ row: streamCollection })
-        .groupBy(({ row }) => row.messageId)
-        .select(({ row }) => ({
-          messageId: row.messageId,
-          rows: collect(row),
+        .from({ chunk: chunksCollection })
+        .groupBy(({ chunk }) => chunk.messageId)
+        .select(({ chunk }) => ({
+          messageId: chunk.messageId,
+          rows: collect(chunk),
           // Capture earliest timestamp for message ordering (ISO 8601 strings sort lexicographically)
-          startedAt: minStr(row.createdAt),
+          startedAt: minStr(chunk.createdAt),
           // Count rows as a discriminator to force change detection when new rows are added.
           // Without this, TanStack DB might not detect that the rows array has changed
           // since the messageId key and startedAt remain the same.
-          rowCount: count(row),
+          rowCount: count(chunk),
         })),
     getKey: (row) => row.messageId,
     startSync: true,
@@ -113,7 +117,7 @@ export interface MessagesCollectionOptions {
  * // First create the intermediate collection
  * const collectedMessages = createCollectedMessagesCollection({
  *   sessionId: 'my-session',
- *   streamCollection,
+ *   chunksCollection: db.collections.chunks,
  * })
  *
  * // Then create the materialized messages collection
@@ -160,8 +164,8 @@ export function createMessagesCollection(
 export interface MessagesPipelineOptions {
   /** Session identifier */
   sessionId: string
-  /** Stream collection to derive from */
-  streamCollection: Collection<StreamRowWithOffset>
+  /** Chunks collection from stream-db */
+  chunksCollection: Collection<ChunkRow>
 }
 
 /**
@@ -184,7 +188,7 @@ export interface MessagesPipelineResult {
  * ```typescript
  * const { messages } = createMessagesPipeline({
  *   sessionId: 'my-session',
- *   streamCollection,
+ *   chunksCollection: db.collections.chunks,
  * })
  *
  * // Access messages directly
@@ -195,12 +199,12 @@ export interface MessagesPipelineResult {
 export function createMessagesPipeline(
   options: MessagesPipelineOptions
 ): MessagesPipelineResult {
-  const { sessionId, streamCollection } = options
+  const { sessionId, chunksCollection } = options
 
   // Stage 1: Create collected messages collection
   const collectedMessages = createCollectedMessagesCollection({
     sessionId,
-    streamCollection,
+    chunksCollection,
   })
 
   // Stage 2: Create materialized messages collection
@@ -212,48 +216,3 @@ export function createMessagesPipeline(
   return { collectedMessages, messages }
 }
 
-// ============================================================================
-// Utility: Wait for message sync
-// ============================================================================
-
-/**
- * Wait for a key to appear in a collection's synced data.
- *
- * @param collection - Collection to wait on
- * @param key - Key to wait for
- * @param timeout - Timeout in milliseconds
- * @returns Promise that resolves when key appears
- */
-export function waitForKey<T extends object>(
-  collection: Collection<T, string | number>,
-  key: string | number,
-  timeout = 30000
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Check if already present (race condition guard)
-    if (collection.has(key)) {
-      resolve()
-
-      return
-    }
-
-    const timer = setTimeout(() => {
-      subscription.unsubscribe()
-
-      reject(new Error(`Timeout waiting for key ${key}`))
-    }, timeout)
-
-    const subscription = collection.subscribeChanges((changes) => {
-      const found = changes.some(
-        (c) => c.type === 'insert' && collection.getKeyFromItem(c.value) === key
-      )
-      if (found || collection.has(key)) {
-        clearTimeout(timer)
-
-        subscription.unsubscribe()
-
-        resolve()
-      }
-    })
-  })
-}

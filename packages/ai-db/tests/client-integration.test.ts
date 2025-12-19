@@ -6,26 +6,14 @@
  *
  * Note: Full integration tests with network mocking would require
  * setting up MSW or similar. These tests focus on the client structure
- * and collection setup.
+ * and collection setup using the sessionDB injection pattern.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { DurableChatClient } from '../src/client'
+import { DurableChatClient, createDurableChatClient } from '../src/client'
+import { createMockSessionDB } from './fixtures/test-helpers'
 import type { DurableChatClientOptions } from '../src/types'
-
-// Mock the durable stream collection to avoid network calls
-vi.mock('@tanstack/durable-stream-db-collection', () => ({
-  durableStreamCollectionOptions: vi.fn((config) => ({
-    id: config.id,
-    getKey: config.getKey,
-    sync: {
-      sync: ({ markReady }: { markReady: () => void }) => {
-        // Immediately mark ready in tests
-        setTimeout(() => markReady(), 0)
-      },
-    },
-  })),
-}))
+import type { SessionDB } from '../src/collection'
 
 describe('DurableChatClient', () => {
   const defaultOptions: DurableChatClientOptions = {
@@ -34,9 +22,15 @@ describe('DurableChatClient', () => {
   }
 
   let client: DurableChatClient
+  let sessionDB: SessionDB
 
   beforeEach(() => {
-    client = new DurableChatClient(defaultOptions)
+    const mock = createMockSessionDB('test-session')
+    sessionDB = mock.sessionDB
+    client = new DurableChatClient({
+      ...defaultOptions,
+      sessionDB, // Inject test sessionDB
+    })
   })
 
   afterEach(() => {
@@ -65,6 +59,7 @@ describe('DurableChatClient', () => {
       const customClient = new DurableChatClient({
         ...defaultOptions,
         actorId: 'custom-actor-id',
+        sessionDB,
       })
       expect(customClient.actorId).toBe('custom-actor-id')
       customClient.dispose()
@@ -74,6 +69,7 @@ describe('DurableChatClient', () => {
       const agentClient = new DurableChatClient({
         ...defaultOptions,
         actorType: 'agent',
+        sessionDB,
       })
       expect(agentClient.actorType).toBe('agent')
       agentClient.dispose()
@@ -81,13 +77,53 @@ describe('DurableChatClient', () => {
   })
 
   // ==========================================================================
-  // Collections Exposure
+  // Pre-connect State (before connect() is called)
   // ==========================================================================
 
-  describe('collections', () => {
-    it('should expose stream collection', () => {
-      expect(client.collections.stream).toBeDefined()
-      expect(typeof client.collections.stream.size).toBe('number')
+  describe('pre-connect state', () => {
+    it('should return empty messages array before connect', () => {
+      expect(client.messages).toEqual([])
+    })
+
+    it('should not be loading before connect', () => {
+      expect(client.isLoading).toBe(false)
+    })
+
+    it('should have no error initially', () => {
+      expect(client.error).toBeUndefined()
+    })
+
+    it('should have disconnected connection status before connect', () => {
+      expect(client.connectionStatus).toBe('disconnected')
+    })
+
+    it('should have collections available immediately after construction', () => {
+      // Collections are now created synchronously in constructor
+      expect(client.collections).toBeDefined()
+      expect(client.collections.chunks).toBeDefined()
+      expect(client.collections.messages).toBeDefined()
+      expect(client.collections.toolCalls).toBeDefined()
+    })
+  })
+
+  // ==========================================================================
+  // Post-connect State (after connect() is called)
+  // ==========================================================================
+
+  describe('post-connect collections', () => {
+    beforeEach(async () => {
+      // Mock fetch for connect()
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+      })
+
+      await client.connect()
+    })
+
+    it('should expose chunks collection', () => {
+      expect(client.collections.chunks).toBeDefined()
+      expect(typeof client.collections.chunks.size).toBe('number')
     })
 
     it('should expose messages collection', () => {
@@ -120,36 +156,9 @@ describe('DurableChatClient', () => {
       expect(typeof client.collections.sessionMeta.size).toBe('number')
     })
 
-    it('should expose sessionParticipants collection', () => {
-      expect(client.collections.sessionParticipants).toBeDefined()
-      expect(typeof client.collections.sessionParticipants.size).toBe('number')
-    })
-
     it('should expose sessionStats collection', () => {
       expect(client.collections.sessionStats).toBeDefined()
       expect(typeof client.collections.sessionStats.size).toBe('number')
-    })
-  })
-
-  // ==========================================================================
-  // Initial State
-  // ==========================================================================
-
-  describe('initial state', () => {
-    it('should return empty messages array initially', () => {
-      expect(client.messages).toEqual([])
-    })
-
-    it('should not be loading initially', () => {
-      expect(client.isLoading).toBe(false)
-    })
-
-    it('should have no error initially', () => {
-      expect(client.error).toBeUndefined()
-    })
-
-    it('should have disconnected connection status initially', () => {
-      expect(client.connectionStatus).toBe('disconnected')
     })
   })
 
@@ -158,11 +167,23 @@ describe('DurableChatClient', () => {
   // ==========================================================================
 
   describe('session metadata', () => {
-    it('should create initial session meta on construction', () => {
+    beforeEach(async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+      })
+      await client.connect()
+    })
+
+    it('should create initial session meta on connect', () => {
       const meta = client.collections.sessionMeta.get('test-session')
       expect(meta).toBeDefined()
       expect(meta?.sessionId).toBe('test-session')
-      expect(meta?.connectionStatus).toBe('disconnected')
+    })
+
+    it('should update connection status to connected after connect', () => {
+      const meta = client.collections.sessionMeta.get('test-session')
+      expect(meta?.connectionStatus).toBe('connected')
     })
   })
 
@@ -233,10 +254,30 @@ describe('DurableChatClient', () => {
   })
 
   // ==========================================================================
+  // sendMessage requires connect
+  // ==========================================================================
+
+  describe('sendMessage behavior', () => {
+    it('should throw when sendMessage called before connect', async () => {
+      await expect(client.sendMessage('hello')).rejects.toThrow(
+        'Client not connected'
+      )
+    })
+  })
+
+  // ==========================================================================
   // isLoading Derived State
   // ==========================================================================
 
   describe('isLoading behavior', () => {
+    beforeEach(async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+      })
+      await client.connect()
+    })
+
     it('should derive isLoading from activeGenerations collection size', () => {
       // Initially no active generations
       expect(client.isLoading).toBe(false)
@@ -251,14 +292,11 @@ describe('DurableChatClient', () => {
   // ==========================================================================
 
   describe('createDurableChatClient factory', () => {
-    it('should be exported from module', async () => {
-      const { createDurableChatClient } = await import('../src/client')
-      expect(typeof createDurableChatClient).toBe('function')
-    })
-
-    it('should create a DurableChatClient instance', async () => {
-      const { createDurableChatClient } = await import('../src/client')
-      const factoryClient = createDurableChatClient(defaultOptions)
+    it('should create a DurableChatClient instance', () => {
+      const factoryClient = createDurableChatClient({
+        ...defaultOptions,
+        sessionDB,
+      })
 
       expect(factoryClient).toBeInstanceOf(DurableChatClient)
       expect(factoryClient.sessionId).toBe('test-session')
@@ -277,6 +315,7 @@ describe('DurableChatClient', () => {
       const clientWithCallback = new DurableChatClient({
         ...defaultOptions,
         onError,
+        sessionDB,
       })
 
       // We can't easily trigger an error without mocking fetch,
@@ -291,6 +330,7 @@ describe('DurableChatClient', () => {
       const clientWithCallback = new DurableChatClient({
         ...defaultOptions,
         onMessagesChange,
+        sessionDB,
       })
 
       // Verify the callback is stored

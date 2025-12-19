@@ -52,13 +52,14 @@ export async function handleSendMessage(
     // Get or create the session stream
     const stream = await protocol.getOrCreateSession(sessionId)
 
-    // Write user message
+    // Write user message (with optional txid for client sync confirmation)
     await protocol.writeUserMessage(
       stream,
       sessionId,
       messageId,
       actorId,
-      body.content
+      body.content,
+      body.txid
     )
 
     // Build message history for agent invocation

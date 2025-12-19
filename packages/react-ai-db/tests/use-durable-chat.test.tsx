@@ -18,39 +18,38 @@ import type { UIMessage } from '@tanstack/ai'
 
 // Import test helpers from ai-db
 import {
-  createMockStreamCollection,
+  createMockSessionDB,
   loadTestData,
-  addOffsets,
   getMessageRows,
   flushPromises,
   TEST_MESSAGE_IDS,
   EXPECTED_CONTENT,
-  type MockStreamController,
+  type MockSessionDBControllers,
 } from '../../ai-db/tests/fixtures/test-helpers'
 
 describe('useDurableChat integration', () => {
   const testData = loadTestData()
 
-  // Mock stream and client to be set up in beforeEach
-  let mockStream: ReturnType<typeof createMockStreamCollection>
-  let controller: MockStreamController
+  // Mock session DB and client to be set up in beforeEach
+  let mockSessionDB: ReturnType<typeof createMockSessionDB>
+  let controllers: MockSessionDBControllers
   let client: DurableChatClient
 
-  beforeEach(() => {
-    // Create mock stream collection with controller
-    mockStream = createMockStreamCollection('test-session')
-    controller = mockStream.controller
+  beforeEach(async () => {
+    // Create mock session DB with controllers for all collections
+    mockSessionDB = createMockSessionDB('test-session')
+    controllers = mockSessionDB.controllers
 
-    // Create real client with injected mock stream
+    // Create real client with injected mock session DB
     client = new DurableChatClient({
       sessionId: 'test-session',
       proxyUrl: 'http://localhost:4000',
-      streamCollection: mockStream.collection,
+      sessionDB: mockSessionDB.sessionDB,
     })
 
-    // Initialize stream collection
-    mockStream.collection.preload()
-    controller.markReady()
+    // Connect the client - this calls sessionDB.preload() which sets up collections
+    // After connect, the hook will detect connectionStatus === 'connected' and set up subscriptions
+    await client.connect()
   })
 
   afterEach(() => {
@@ -76,10 +75,11 @@ describe('useDurableChat integration', () => {
       expect(result.current.error).toBeUndefined()
     })
 
-    it('should have disconnected connection status initially', () => {
+    it('should have connected connection status when client is pre-connected', () => {
+      // Client is pre-connected in beforeEach, hook detects this and sets up subscriptions
       const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
 
-      expect(result.current.connectionStatus).toBe('disconnected')
+      expect(result.current.connectionStatus).toBe('connected')
     })
   })
 
@@ -115,7 +115,7 @@ describe('useDurableChat integration', () => {
       expect(result.current.collections).toBeDefined()
       expect(result.current.collections.messages).toBeDefined()
       expect(result.current.collections.activeGenerations).toBeDefined()
-      expect(result.current.collections.stream).toBeDefined()
+      expect(result.current.collections.chunks).toBeDefined()
     })
   })
 
@@ -124,9 +124,9 @@ describe('useDurableChat integration', () => {
       const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
 
       // Emit user message (wrapped in act for React state updates)
-      const userMessageRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
+      const userMessageRows = getMessageRows(testData, TEST_MESSAGE_IDS.USER_1)
       await act(async () => {
-        controller.emit(userMessageRows)
+        controllers.chunks.emit(userMessageRows)
         await flushPromises()
       })
 
@@ -145,7 +145,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -155,7 +155,7 @@ describe('useDurableChat integration', () => {
 
       // Emit assistant response (all chunks)
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1))
         await flushPromises()
       })
 
@@ -173,7 +173,11 @@ describe('useDurableChat integration', () => {
 
       // Emit all test data at once (simulates reconnect/catch-up)
       await act(async () => {
-        controller.emit(addOffsets(testData, 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1).concat(
+          getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1),
+          getMessageRows(testData, TEST_MESSAGE_IDS.USER_2),
+          getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_2)
+        ))
         await flushPromises()
       })
 
@@ -201,7 +205,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message first
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -210,11 +214,11 @@ describe('useDurableChat integration', () => {
       })
 
       // Emit assistant chunks one by one
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
 
       // First chunk - message appears
       await act(async () => {
-        controller.emit([assistantRows[0]])
+        controllers.chunks.emit([assistantRows[0]])
         await flushPromises()
       })
 
@@ -225,14 +229,14 @@ describe('useDurableChat integration', () => {
       // Middle chunks - content updates
       for (let i = 1; i < assistantRows.length - 1; i++) {
         await act(async () => {
-          controller.emit([assistantRows[i]])
+          controllers.chunks.emit([assistantRows[i]])
           await flushPromises()
         })
       }
 
       // Final chunk - message completes
       await act(async () => {
-        controller.emit([assistantRows[assistantRows.length - 1]])
+        controllers.chunks.emit([assistantRows[assistantRows.length - 1]])
         await flushPromises()
       })
 
@@ -266,7 +270,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message first
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -279,7 +283,7 @@ describe('useDurableChat integration', () => {
       // - seq 0: content="" (initial empty chunk)
       // - seq 1-10: content="Hi", "Hi there", "Hi there!", ... (accumulating)
       // - seq 11: done chunk (finishReason="stop")
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
 
       // Track content at each chunk
       const contentUpdates: string[] = []
@@ -287,7 +291,7 @@ describe('useDurableChat integration', () => {
       // Emit chunks one by one and verify content grows
       for (let i = 0; i < assistantRows.length; i++) {
         await act(async () => {
-          controller.emit([assistantRows[i]])
+          controllers.chunks.emit([assistantRows[i]])
           await flushPromises()
         })
 
@@ -345,7 +349,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message first
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -354,12 +358,12 @@ describe('useDurableChat integration', () => {
       })
 
       // Get all assistant chunks
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
 
       // Emit ALL chunks in a single batch (no delays between)
       await act(async () => {
         for (const row of assistantRows) {
-          controller.emit([row])
+          controllers.chunks.emit([row])
         }
         await flushPromises()
       })
@@ -415,7 +419,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message first
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -428,10 +432,10 @@ describe('useDurableChat integration', () => {
       observedContents.length = 0
 
       // Emit assistant chunks WITH delays (should show all states)
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       for (const row of assistantRows) {
         await act(async () => {
-          controller.emit([row])
+          controllers.chunks.emit([row])
           await flushPromises()
         })
       }
@@ -457,7 +461,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message first
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -466,11 +470,11 @@ describe('useDurableChat integration', () => {
       })
 
       // Get all assistant chunks
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
 
       // Emit ALL chunks in ONE emit call (single transaction)
       await act(async () => {
-        controller.emit(assistantRows)
+        controllers.chunks.emit(assistantRows)
         await flushPromises()
       })
 
@@ -494,7 +498,7 @@ describe('useDurableChat integration', () => {
 
       // Emit user message
       await act(async () => {
-        controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+        controllers.chunks.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
         await flushPromises()
       })
 
@@ -502,9 +506,9 @@ describe('useDurableChat integration', () => {
       expect(result.current.isLoading).toBe(false)
 
       // Start assistant response (first chunk, not done)
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       await act(async () => {
-        controller.emit([assistantRows[0]])
+        controllers.chunks.emit([assistantRows[0]])
         await flushPromises()
       })
 
@@ -515,7 +519,7 @@ describe('useDurableChat integration', () => {
 
       // Complete the message
       await act(async () => {
-        controller.emit(assistantRows.slice(1))
+        controllers.chunks.emit(assistantRows.slice(1))
         await flushPromises()
       })
 

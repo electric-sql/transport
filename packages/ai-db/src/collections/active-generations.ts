@@ -33,7 +33,7 @@ function messageToActiveGeneration(message: MessageRow): ActiveGenerationRow {
     messageId: message.id,
     actorId: message.actorId,
     startedAt: message.createdAt,
-    lastChunkOffset: message.startOffset, // Best we have without tracking each chunk
+    lastChunkSeq: 0, // We don't track seq in messages, so use 0 as placeholder
     lastChunkAt: message.createdAt,
   }
 }

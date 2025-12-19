@@ -9,7 +9,8 @@
 
 import { createLiveQueryCollection, collect } from '@tanstack/db'
 import type { Collection } from '@tanstack/db'
-import type { StreamRowWithOffset, SessionStatsRow, MessageRow } from '../types'
+import type { ChunkRow } from '../schema'
+import type { SessionStatsRow, MessageRow } from '../types'
 import {
   groupRowsByMessage,
   materializeMessage,
@@ -28,7 +29,7 @@ import {
  */
 interface CollectedSessionRows {
   sessionId: string
-  rows: StreamRowWithOffset[]
+  rows: ChunkRow[]
 }
 
 /**
@@ -37,22 +38,22 @@ interface CollectedSessionRows {
 export interface SessionStatsCollectionOptions {
   /** Session identifier */
   sessionId: string
-  /** Stream collection to derive stats from */
-  streamCollection: Collection<StreamRowWithOffset>
+  /** Chunks collection from stream-db */
+  chunksCollection: Collection<ChunkRow>
 }
 
 /**
  * Creates the session stats collection.
  *
  * Uses a two-stage pipeline:
- * 1. Group all stream rows by sessionId and collect
+ * 1. Group all chunk rows by sessionId and collect
  * 2. Use fn.select to compute SessionStatsRow from collected rows
  *
  * @example
  * ```typescript
  * const sessionStats = createSessionStatsCollection({
  *   sessionId: 'my-session',
- *   streamCollection,
+ *   chunksCollection: db.collections.chunks,
  * })
  *
  * // Access stats directly
@@ -63,18 +64,18 @@ export interface SessionStatsCollectionOptions {
 export function createSessionStatsCollection(
   options: SessionStatsCollectionOptions
 ): Collection<SessionStatsRow> {
-  const { sessionId, streamCollection } = options
+  const { sessionId, chunksCollection } = options
 
   // Stage 1: Create intermediate collection with collected rows
   // startSync: true ensures the collection starts syncing immediately.
   const collectedRows = createLiveQueryCollection({
     query: (q) =>
       q
-        .from({ row: streamCollection })
+        .from({ chunk: chunksCollection })
         .groupBy(() => sessionId)
-        .select(({ row }) => ({
+        .select(({ chunk }) => ({
           sessionId,
-          rows: collect(row),
+          rows: collect(chunk),
         })),
     startSync: true,
   })
@@ -93,15 +94,15 @@ export function createSessionStatsCollection(
 }
 
 /**
- * Compute session statistics from stream rows.
+ * Compute session statistics from chunk rows.
  *
  * @param sessionId - Session identifier
- * @param rows - All stream rows
+ * @param rows - All chunk rows
  * @returns Computed statistics
  */
 export function computeSessionStats(
   sessionId: string,
-  rows: StreamRowWithOffset[]
+  rows: ChunkRow[]
 ): SessionStatsRow {
   if (rows.length === 0) {
     return createEmptyStats(sessionId)
@@ -166,12 +167,12 @@ export function computeSessionStats(
 }
 
 /**
- * Extract token usage from stream rows.
+ * Extract token usage from chunk rows.
  *
- * @param rows - Stream rows to extract from
+ * @param rows - Chunk rows to extract from
  * @returns Token usage counts
  */
-function extractTokenUsage(rows: StreamRowWithOffset[]): {
+function extractTokenUsage(rows: ChunkRow[]): {
   totalTokens: number
   promptTokens: number
   completionTokens: number

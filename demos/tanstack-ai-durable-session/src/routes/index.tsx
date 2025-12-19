@@ -6,8 +6,8 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
-import { useDurableChat, type DurableChatClient } from '@electric-sql/react-ai-db'
-import type { AgentSpec, ConnectionStatus, StreamRowWithOffset } from '@electric-sql/react-ai-db'
+import { useDurableChat } from '@electric-sql/react-ai-db'
+import type { AgentSpec, ConnectionStatus, ChunkRow, DurableChatCollections } from '@electric-sql/react-ai-db'
 import { useLiveQuery } from '@tanstack/react-db'
 import type { UIMessage } from '@tanstack/ai'
 
@@ -136,7 +136,7 @@ function ChatPage() {
  * Client-only wrapper for the stream debug panel.
  * useLiveQuery doesn't support SSR (missing getServerSnapshot), so we only render on client.
  */
-function ClientOnlyStreamDebug({ collections }: { collections: DurableChatClient['collections'] }) {
+function ClientOnlyStreamDebug({ collections }: { collections: DurableChatCollections }) {
   const [isClient, setIsClient] = useState(false)
 
   useEffect(() => {
@@ -158,27 +158,28 @@ function ClientOnlyStreamDebug({ collections }: { collections: DurableChatClient
  * Stream debug panel that uses useLiveQuery to display live stream data.
  * Only rendered on the client side.
  */
-function StreamDebugPanel({ collections }: { collections: DurableChatClient['collections'] }) {
-  // Use useLiveQuery to reactively get stream rows for debug panel
-  // Order by offset to show chunks in chronological order
-  const streamRows = useLiveQuery(
+function StreamDebugPanel({ collections }: { collections: DurableChatCollections }) {
+  // Use useLiveQuery to reactively get chunks for debug panel
+  // Order by createdAt then seq to show chunks in chronological order
+  const chunkRows = useLiveQuery(
     (q) => q
-      .from({ row: collections.stream })
-      .orderBy(({ row }) => row.offset, 'asc'),
-    [collections.stream]
+      .from({ row: collections.chunks })
+      .orderBy(({ row }) => row.createdAt, 'asc')
+      .orderBy(({ row }) => row.seq, 'asc'),
+    [collections.chunks]
   )
 
-  // Parse chunks from stream rows for debug display
+  // Parse chunks from chunk rows for debug display
   const parsedChunks = useMemo(() => {
-    if (!streamRows.data) return []
-    return streamRows.data.map((row: StreamRowWithOffset) => {
+    if (!chunkRows.data) return []
+    return chunkRows.data.map((row: ChunkRow) => {
       try {
         return JSON.parse(row.chunk) as { type: string; [key: string]: unknown }
       } catch {
         return { type: 'unknown', raw: row.chunk }
       }
     })
-  }, [streamRows.data])
+  }, [chunkRows.data])
 
   return <DebugPanel chunks={parsedChunks} />
 }

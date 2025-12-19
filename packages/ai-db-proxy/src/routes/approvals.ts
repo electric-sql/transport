@@ -30,13 +30,14 @@ export function createApprovalRoutes(protocol: AIDBSessionProtocol) {
       // Get session
       const stream = await protocol.getOrCreateSession(sessionId)
 
-      // Write approval response
+      // Write approval response (with optional txid for client sync confirmation)
       await protocol.writeApprovalResponse(
         stream,
         sessionId,
         actorId,
         approvalId,
-        body.approved
+        body.approved,
+        body.txid
       )
 
       return new Response(null, { status: 204 })

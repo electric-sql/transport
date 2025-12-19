@@ -11,9 +11,9 @@
 import { createCollection, createOptimisticAction } from '@tanstack/db'
 import type { Transaction } from '@tanstack/db'
 import type { UIMessage, AnyClientTool } from '@tanstack/ai'
+import type { ChunkRow } from './schema'
 import type {
   DurableChatClientOptions,
-  StreamRowWithOffset,
   MessageRow,
   SessionMetaRow,
   AgentSpec,
@@ -25,8 +25,8 @@ import type {
   ApprovalResponseInput,
   ActorType,
 } from './types'
+import { createSessionDB, getChunkKey, type SessionDB } from './collection'
 import {
-  createStreamCollectionOptions,
   createCollectedMessagesCollection,
   createMessagesCollection,
   createToolCallsCollection,
@@ -34,12 +34,10 @@ import {
   createApprovalsCollection,
   createActiveGenerationsCollection,
   createSessionMetaCollectionOptions,
-  createSessionParticipantsCollection,
   createSessionStatsCollection,
   createInitialSessionMeta,
   updateConnectionStatus,
   updateSyncProgress,
-  waitForKey,
 } from './collections'
 import { extractTextContent } from './materialize'
 
@@ -104,23 +102,31 @@ export class DurableChatClient<
   private readonly _instanceId: number
 
   private readonly options: DurableChatClientOptions<TTools>
+
+  // Stream-db instance (created synchronously in constructor)
+  // Either from options.sessionDB (tests) or createSessionDB() (production)
+  private readonly _db: SessionDB
+
   // Collections are typed via inference from createCollections()
+  // Created synchronously in constructor - always available
   private readonly _collections: ReturnType<DurableChatClient['createCollections']>['collections']
   private readonly _collectedMessages: ReturnType<DurableChatClient['createCollections']>['collectedMessages']
+
   private _isConnected = false
   private _isPaused = false
   private _error: Error | undefined
-  // AbortController created at construction time to pass signal to stream collection.
+
+  // AbortController created at construction time to pass signal to stream-db.
   // Aborted on disconnect() to cancel the stream sync.
   private readonly _abortController: AbortController
 
-  // Counter for generating unique optimistic offsets
+  // Counter for generating unique optimistic sequence numbers
   private _optimisticSeq = 0
 
-  // Optimistic actions for mutations
-  private _messageAction: (input: MessageActionInput) => Transaction
-  private _addToolResultAction: (input: ClientToolResultInput) => Transaction
-  private _addApprovalResponseAction: (input: ApprovalResponseInput) => Transaction
+  // Optimistic actions for mutations (created synchronously in constructor)
+  private readonly _messageAction: (input: MessageActionInput) => Transaction
+  private readonly _addToolResultAction: (input: ClientToolResultInput) => Transaction
+  private readonly _addApprovalResponseAction: (input: ApprovalResponseInput) => Transaction
 
   // ═══════════════════════════════════════════════════════════════════════
   // Constructor
@@ -133,10 +139,18 @@ export class DurableChatClient<
     this.actorId = options.actorId ?? crypto.randomUUID()
     this.actorType = options.actorType ?? 'user'
 
-    // Create abort controller before collections so we can pass signal to stream
+    // Create abort controller before anything else
     this._abortController = new AbortController()
 
-    // Create collections pipeline
+    // Create stream-db synchronously (use injected sessionDB for tests)
+    this._db = options.sessionDB ?? createSessionDB({
+      sessionId: this.sessionId,
+      baseUrl: options.proxyUrl,
+      headers: options.stream?.headers,
+      signal: this._abortController.signal,
+    })
+
+    // Create all collections synchronously (always from _db.collections)
     const { collections, collectedMessages } = this.createCollections()
     this._collections = collections
     this._collectedMessages = collectedMessages
@@ -146,7 +160,7 @@ export class DurableChatClient<
       createInitialSessionMeta(this.sessionId)
     )
 
-    // Initialize optimistic actions
+    // Create optimistic actions (they use collections)
     this._messageAction = this.createMessageAction()
     this._addToolResultAction = this.createAddToolResultAction()
     this._addApprovalResponseAction = this.createApprovalResponseAction()
@@ -156,27 +170,23 @@ export class DurableChatClient<
   // Collection Setup
   // ═══════════════════════════════════════════════════════════════════════
 
+  /**
+   * Create all derived collections from the chunks collection.
+   *
+   * This implements the live query pipeline pattern:
+   * chunks → collectedMessages → messages (and other derived collections)
+   *
+   * CRITICAL: Materialization happens inside fn.select(). No imperative code
+   * outside this pattern.
+   */
   private createCollections() {
-    const baseUrl = this.options.proxyUrl
-
-    // Use injected stream collection if provided (for testing),
-    // otherwise create one synced from Durable Streams
-    const stream =
-      this.options.streamCollection ??
-      createCollection(
-        createStreamCollectionOptions({
-          sessionId: this.sessionId,
-          baseUrl,
-          headers: this.options.stream?.headers,
-          // Pass abort signal to cancel stream sync on disconnect
-          signal: this._abortController.signal,
-        })
-      )
+    // Get root collections from stream-db (always available - from real or mock SessionDB)
+    const { chunks, presence, agents } = this._db.collections
 
     // Stage 1: Create collected messages (intermediate - groups by messageId)
     const collectedMessages = createCollectedMessagesCollection({
       sessionId: this.sessionId,
-      streamCollection: stream,
+      chunksCollection: chunks,
     })
 
     // Stage 2: Create materialized messages collection
@@ -216,27 +226,22 @@ export class DurableChatClient<
       })
     )
 
-    // Create session participants collection (derived from stream)
-    const sessionParticipants = createSessionParticipantsCollection({
-      sessionId: this.sessionId,
-      streamCollection: stream,
-    })
-
-    // Create session statistics collection (derived from stream)
+    // Create session statistics collection (derived from chunks)
     const sessionStats = createSessionStatsCollection({
       sessionId: this.sessionId,
-      streamCollection: stream,
+      chunksCollection: chunks,
     })
 
     return {
       collections: {
-        stream,
+        chunks,
+        presence,
+        agents,
         messages,
         toolCalls,
         toolResults,
         approvals,
         activeGenerations,
-        sessionParticipants,
         sessionMeta,
         sessionStats,
       },
@@ -283,6 +288,10 @@ export class DurableChatClient<
    * @param content - Text content to send
    */
   async sendMessage(content: string): Promise<void> {
+    if (!this._isConnected) {
+      throw new Error('Client not connected. Call connect() first.')
+    }
+
     await this.executeAction(this._messageAction, {
       content,
       messageId: crypto.randomUUID(),
@@ -300,6 +309,10 @@ export class DurableChatClient<
    * @param message - UIMessage or ModelMessage to append
    */
   async append(message: UIMessage | { role: string; content: string }): Promise<void> {
+    if (!this._isConnected) {
+      throw new Error('Client not connected. Call connect() first.')
+    }
+
     const content =
       'parts' in message
         ? extractTextContent(message as MessageRow)
@@ -367,33 +380,31 @@ export class DurableChatClient<
    * Create the unified optimistic action for all message types.
    * Handles user, assistant, and system messages with the same pattern.
    *
-   * IMPORTANT: We insert into the stream collection (not the messages collection)
+   * IMPORTANT: We insert into the chunks collection (not the messages collection)
    * because messages is a derived collection from a live query pipeline. Inserting
    * directly into a derived collection causes TanStack DB reconciliation bugs where
    * synced data becomes invisible while the optimistic mutation is pending.
    *
-   * By inserting into the stream collection with the user-message format, the
-   * optimistic row flows through the normal pipeline: stream → collectedMessages → messages.
+   * By inserting into the chunks collection with the user-message format, the
+   * optimistic row flows through the normal pipeline: chunks → collectedMessages → messages.
    */
   private createMessageAction() {
     return createOptimisticAction<MessageActionInput>({
       onMutate: ({ content, messageId, role }) => {
-        // Z-padded offset sorts after any real Durable Streams offset.
-        // Durable Streams format: "0000000000000000_0000000000001234" (16-digit seq + 16-digit byte)
-        // Optimistic format: "zzzzzzzzzzzzzzzz_${seq.padStart(16, '0')}" (z-prefix sorts last)
-        // When the real message syncs, this row is replaced with the real offset.
-        const seq = (this._optimisticSeq++).toString().padStart(16, '0')
-        const optimisticOffset = `zzzzzzzzzzzzzzzz_${seq}`
+        // For optimistic inserts, we use seq=0 since user messages are single-chunk.
+        // The key format is `${messageId}:${seq}`.
+        const seq = 0
+        const id = getChunkKey(messageId, seq)
 
         const createdAt = new Date()
 
-        // Insert into stream collection with user-message format.
-        // This flows through the live query pipeline: stream → collectedMessages → messages
-        this._collections.stream.insert({
-          sessionId: this.sessionId,
+        // Insert into chunks collection with user-message format.
+        // This flows through the live query pipeline: chunks → collectedMessages → messages
+        this._collections.chunks.insert({
+          id,
           messageId,
           actorId: this.actorId,
-          actorType: this.actorType,
+          role,
           chunk: JSON.stringify({
             type: 'user-message',
             message: {
@@ -404,23 +415,24 @@ export class DurableChatClient<
             },
           }),
           createdAt: createdAt.toISOString(),
-          seq: 0,
-          offset: optimisticOffset,
+          seq,
         })
       },
       mutationFn: async ({ content, messageId, role, agent }) => {
+        const txid = crypto.randomUUID()
+
         await this.postToProxy(`/v1/sessions/${this.sessionId}/messages`, {
           messageId,
           content,
           role,
           actorId: this.actorId,
           actorType: this.actorType,
+          txid,
           ...(agent && { agent }),
         })
 
-        // Wait for synced row in stream collection (where we inserted optimistically).
-        // Key format: `${messageId}:${seq}` - user messages have seq=0
-        await waitForKey(this._collections.stream, `${messageId}:0`)
+        // Wait for txid to appear in synced stream
+        await this._db.utils.awaitTxId(txid)
       },
     })
   }
@@ -472,9 +484,6 @@ export class DurableChatClient<
    * Stop all active generations.
    */
   stop(): void {
-    // Cancel any in-flight requests
-    this._abortController.abort()
-
     // Call stop endpoint
     fetch(`${this.options.proxyUrl}/v1/sessions/${this.sessionId}/stop`, {
       method: 'POST',
@@ -502,6 +511,10 @@ export class DurableChatClient<
    * @param result - Tool result to add
    */
   async addToolResult(result: ToolResultInput): Promise<void> {
+    if (!this._isConnected) {
+      throw new Error('Client not connected. Call connect() first.')
+    }
+
     // Ensure messageId is set for optimistic updates
     const inputWithMessageId: ClientToolResultInput = {
       ...result,
@@ -531,13 +544,16 @@ export class DurableChatClient<
         })
       },
       mutationFn: async ({ messageId, toolCallId, output, error }) => {
+        const txid = crypto.randomUUID()
+
         await this.postToProxy(
           `/v1/sessions/${this.sessionId}/tool-results`,
-          { messageId, toolCallId, output, error: error ?? null },
+          { messageId, toolCallId, output, error: error ?? null, txid },
           { actorIdHeader: true }
         )
 
-        await waitForKey(this._collections.toolResults, `${messageId}:${toolCallId}`)
+        // Wait for txid to appear in synced stream
+        await this._db.utils.awaitTxId(txid)
       },
     })
   }
@@ -550,6 +566,10 @@ export class DurableChatClient<
    * @param response - Approval response
    */
   async addToolApprovalResponse(response: ApprovalResponseInput): Promise<void> {
+    if (!this._isConnected) {
+      throw new Error('Client not connected. Call connect() first.')
+    }
+
     await this.executeAction(this._addApprovalResponseAction, response)
   }
 
@@ -574,13 +594,16 @@ export class DurableChatClient<
         }
       },
       mutationFn: async ({ id, approved }) => {
+        const txid = crypto.randomUUID()
+
         await this.postToProxy(
           `/v1/sessions/${this.sessionId}/approvals/${id}`,
-          { approved },
+          { approved, txid },
           { actorIdHeader: true }
         )
-        // No waitForKey needed - optimistic update shows immediate feedback,
-        // natural sync will confirm or replace it.
+
+        // Wait for txid to appear in synced stream
+        await this._db.utils.awaitTxId(txid)
       },
     })
   }
@@ -592,6 +615,7 @@ export class DurableChatClient<
   /**
    * Get all collections for custom queries.
    * All collections contain fully materialized objects.
+   * Collections are available immediately after construction.
    */
   get collections() {
     return this._collections
@@ -682,48 +706,46 @@ export class DurableChatClient<
 
   /**
    * Connect to the durable stream and start syncing.
+   *
+   * This method handles network operations only - collections are already
+   * created synchronously in the constructor and are immediately available.
    */
   async connect(): Promise<void> {
     if (this._isConnected) return
 
-    // Update connection status
-    this.updateSessionMeta((meta) =>
-      updateConnectionStatus(meta, 'connecting')
-    )
-
     try {
-      // Create or get the session on the server
-      const response = await fetch(
-        `${this.options.proxyUrl}/v1/sessions/${this.sessionId}`,
-        {
-          method: 'PUT',
-          headers: this.options.stream?.headers,
-          signal: this._abortController.signal,
-        }
+      // Update connection status
+      this.updateSessionMeta((meta) =>
+        updateConnectionStatus(meta, 'connecting')
       )
 
-      if (!response.ok && response.status !== 200 && response.status !== 201) {
-        throw new Error(`Failed to create session: ${response.status}`)
+      // Skip server call when using injected sessionDB (test mode)
+      // This allows tests to use connect() without needing a real server
+      if (!this.options.sessionDB) {
+        // Create or get the session on the server
+        const response = await fetch(
+          `${this.options.proxyUrl}/v1/sessions/${this.sessionId}`,
+          {
+            method: 'PUT',
+            headers: this.options.stream?.headers,
+            signal: this._abortController.signal,
+          }
+        )
+
+        if (!response.ok && response.status !== 200 && response.status !== 201) {
+          throw new Error(`Failed to create session: ${response.status}`)
+        }
       }
 
-      // Start the stream collection sync
-      // The collection handles the actual stream following
+      // Preload stream data (works for both real and mock sessionDB)
+      await this._db.preload()
+
       this._isConnected = true
       this._isPaused = false
 
       // Update connection status
       this.updateSessionMeta((meta) => updateConnectionStatus(meta, 'connected'))
 
-      // Subscribe to stream changes to track sync progress
-      this._collections.stream.subscribeChanges((changes) => {
-        if (changes.length > 0) {
-          const lastChange = changes[changes.length - 1]
-          if (lastChange.type === 'insert') {
-            const row = lastChange.value as StreamRowWithOffset
-            this.updateSessionMeta((meta) => updateSyncProgress(meta, row.offset))
-          }
-        }
-      })
     } catch (error) {
       this._error = error instanceof Error ? error : new Error(String(error))
       this.updateSessionMeta((meta) =>
@@ -741,7 +763,7 @@ export class DurableChatClient<
    */
   pause(): void {
     this._isPaused = true
-    // The collection will handle pausing internally
+    // The stream-db handles pausing internally via the abort signal
   }
 
   /**
@@ -754,13 +776,16 @@ export class DurableChatClient<
     }
 
     this._isPaused = false
-    // The collection will handle resuming internally
+    // The stream-db handles resuming internally
   }
 
   /**
    * Disconnect from the stream.
    */
   disconnect(): void {
+    // Close stream-db (which aborts the stream)
+    this._db.close()
+
     this._abortController.abort()
     this._isConnected = false
     this._isPaused = false
