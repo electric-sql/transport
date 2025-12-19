@@ -55,8 +55,6 @@ export {
   // Types
   type ActorType,
   type ChunkRow,
-  type StreamRow,
-  type StreamRowWithOffset,
   type MessageRole,
   type MessageRow,
   type ActiveGenerationRow,
@@ -66,7 +64,6 @@ export {
   type ApprovalStatus,
   type ApprovalRow,
   type ConnectionStatus,
-  type SessionParticipant,
   type SessionMetaRow,
   type SessionStatsRow,
   type AgentTrigger,

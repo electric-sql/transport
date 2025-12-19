@@ -73,10 +73,6 @@ export type {
   // Actor types
   ActorType,
 
-  // Stream protocol types
-  StreamRow,
-  StreamRowWithOffset,
-
   // Message types
   MessageRole,
   MessageRow,
@@ -95,7 +91,6 @@ export type {
 
   // Session types
   ConnectionStatus,
-  SessionParticipant,
   SessionMetaRow,
   SessionStatsRow,
 
@@ -108,7 +103,6 @@ export type {
 
   // Configuration types
   DurableChatClientOptions,
-  DurableSessionStreamConfig,
   SessionDBConfig,
   LiveMode,
 
@@ -133,10 +127,6 @@ export {
 } from './collection'
 
 export {
-  // Stream collection
-  createStreamCollectionOptions,
-  type StreamCollectionOptions,
-
   // Messages collection (two-stage pipeline)
   createCollectedMessagesCollection,
   createMessagesCollection,
@@ -169,10 +159,6 @@ export {
   updateConnectionStatus,
   updateSyncProgress,
   type SessionMetaCollectionOptions,
-
-  // Session participants collection
-  createSessionParticipantsCollection,
-  type SessionParticipantsCollectionOptions,
 
   // Session statistics collection
   createSessionStatsCollection,
