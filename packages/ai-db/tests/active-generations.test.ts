@@ -38,7 +38,6 @@ describe('active generations collection', () => {
     controller = mock.controller
 
     // Create the pipeline: chunks -> collectedMessages -> messages -> activeGenerations
-    // Note: derived collections use startSync: true, so they start syncing immediately
     const collectedMessagesCollection = createCollectedMessagesCollection({
       sessionId: 'test-session',
       chunksCollection,
@@ -54,8 +53,11 @@ describe('active generations collection', () => {
       messagesCollection,
     })
 
-    // Initialize chunks collection
+    // Initialize all collections - preload creates demand for syncing
     chunksCollection.preload()
+    collectedMessagesCollection.preload()
+    messagesCollection.preload()
+    activeGenerations.preload()
     controller.markReady()
   })
 

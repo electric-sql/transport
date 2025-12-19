@@ -72,7 +72,6 @@ export function createActiveGenerationsCollection(
 
   // Filter messages for incomplete ones and transform to ActiveGenerationRow
   // Order by createdAt to ensure chronological ordering
-  // startSync: true ensures the collection starts syncing immediately.
   return createLiveQueryCollection({
     query: (q) =>
       q
@@ -80,6 +79,5 @@ export function createActiveGenerationsCollection(
         .orderBy(({ message }) => message.createdAt, 'asc')
         .fn.where(({ message }) => !message.isComplete)
         .fn.select(({ message }) => messageToActiveGeneration(message)),
-    startSync: true,
   })
 }

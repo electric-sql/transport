@@ -67,7 +67,6 @@ export function createSessionStatsCollection(
   const { sessionId, chunksCollection } = options
 
   // Stage 1: Create intermediate collection with collected rows
-  // startSync: true ensures the collection starts syncing immediately.
   const collectedRows = createLiveQueryCollection({
     query: (q) =>
       q
@@ -77,11 +76,9 @@ export function createSessionStatsCollection(
           sessionId,
           rows: collect(chunk),
         })),
-    startSync: true,
   })
 
   // Stage 2: Compute stats from collected rows
-  // startSync: true ensures the collection starts syncing immediately.
   return createLiveQueryCollection({
     query: (q) =>
       q
@@ -89,7 +86,6 @@ export function createSessionStatsCollection(
         .fn.select(({ collected }) =>
           computeSessionStats(collected.sessionId, collected.rows)
         ),
-    startSync: true,
   })
 }
 

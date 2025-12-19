@@ -44,7 +44,6 @@ describe('messages collection', () => {
     controller = mock.controller
 
     // Create the two-stage pipeline
-    // Note: derived collections use startSync: true, so they start syncing immediately
     collectedMessagesCollection = createCollectedMessagesCollection({
       sessionId: 'test-session',
       chunksCollection,
@@ -55,8 +54,10 @@ describe('messages collection', () => {
       collectedMessagesCollection,
     })
 
-    // Initialize chunks collection
+    // Initialize all collections - preload creates demand for syncing
     chunksCollection.preload()
+    collectedMessagesCollection.preload()
+    messagesCollection.preload()
     controller.markReady()
   })
 

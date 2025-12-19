@@ -63,13 +63,11 @@ export function createApprovalsCollection(
   // Extract approvals from each message's collected rows
   // fn.select can return an array which will be flattened
   // Order by startedAt to ensure chronological message ordering
-  // startSync: true ensures the collection starts syncing immediately.
   return createLiveQueryCollection({
     query: (q) =>
       q
         .from({ collected: collectedMessagesCollection })
         .orderBy(({ collected }) => collected.startedAt, 'asc')
         .fn.select(({ collected }) => extractApprovals(collected.rows)),
-    startSync: true,
   })
 }

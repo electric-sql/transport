@@ -68,8 +68,6 @@ export function createCollectedMessagesCollection(
 ): Collection<CollectedMessageRows> {
   const { chunksCollection } = options
 
-  // Use config object form with startSync: true to ensure the collection
-  // starts syncing immediately upon creation, providing demand for upstream data
   const collection = createLiveQueryCollection({
     query: (q) =>
       q
@@ -86,7 +84,6 @@ export function createCollectedMessagesCollection(
           rowCount: count(chunk),
         })),
     getKey: (row) => row.messageId,
-    startSync: true,
   })
 
   return collection
@@ -140,7 +137,6 @@ export function createMessagesCollection(
   // Pass query function to createLiveQueryCollection to let it infer types.
   // Use config object form to provide explicit getKey - this is required for
   // optimistic mutations (insert/update/delete) on derived collections.
-  // startSync: true ensures the collection starts syncing immediately.
   const collection = createLiveQueryCollection({
     query: (q) =>
       q
@@ -148,7 +144,6 @@ export function createMessagesCollection(
         .orderBy(({ collected }) => collected.startedAt, 'asc')
         .fn.select(({ collected }) => materializeMessage(collected.rows)),
     getKey: (row) => row.id,
-    startSync: true,
   })
 
   return collection
