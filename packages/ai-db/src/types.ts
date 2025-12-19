@@ -25,24 +25,24 @@ export type { LiveMode }
 // ============================================================================
 
 /**
- * Complete user message chunk - stored as single row in stream.
+ * Whole message chunk - stored as single row in stream.
  * Used for messages that are complete when written (user input, cached messages).
  *
  * This is different from TanStack AI's StreamChunk types, which are designed
- * for streaming assistant responses. User messages are complete when sent,
+ * for streaming assistant responses. Whole messages are complete when sent,
  * so we store them as complete UIMessage objects.
  */
-export interface UserMessageChunk {
-  type: 'user-message'
+export interface WholeMessageChunk {
+  type: 'whole-message'
   message: UIMessage
 }
 
 /**
  * Union of all chunk types we handle.
- * - UserMessageChunk: Complete messages (user input)
+ * - WholeMessageChunk: Complete messages (user input)
  * - StreamChunk: TanStack AI streaming chunks (assistant responses)
  */
-export type DurableStreamChunk = UserMessageChunk | StreamChunk
+export type DurableStreamChunk = WholeMessageChunk | StreamChunk
 
 /**
  * Actor types in the chat session.

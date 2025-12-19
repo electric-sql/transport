@@ -2,7 +2,7 @@
  * Message materialization from stream chunks.
  *
  * Handles two formats:
- * 1. User messages: Single row with {type: 'user-message', message: UIMessage}
+ * 1. User messages: Single row with {type: 'whole-message', message: UIMessage}
  * 2. Assistant messages: Multiple rows with TanStack AI StreamChunks
  *
  * Chunk processing for assistant messages is delegated to TanStack AI's StreamProcessor.
@@ -27,7 +27,7 @@ import type {
   ApprovalRow,
   ApprovalStatus,
   ActiveGenerationRow,
-  UserMessageChunk,
+  WholeMessageChunk,
   DurableStreamChunk,
 } from './types'
 
@@ -56,10 +56,10 @@ function isApprovalRequestedChunk(chunk: StreamChunk): chunk is ApprovalRequeste
 }
 
 /**
- * Type guard for UserMessageChunk.
+ * Type guard for WholeMessageChunk.
  */
-function isUserMessageChunk(chunk: DurableStreamChunk | null): chunk is UserMessageChunk {
-  return chunk !== null && chunk.type === 'user-message'
+function isWholeMessageChunk(chunk: DurableStreamChunk | null): chunk is WholeMessageChunk {
+  return chunk !== null && chunk.type === 'whole-message'
 }
 
 // ============================================================================
@@ -81,12 +81,12 @@ export function parseChunk(chunkJson: string): DurableStreamChunk | null {
 }
 
 /**
- * Materialize a user message from a single row.
+ * Materialize a whole message from a single row.
  * User messages are stored as complete UIMessage objects.
  */
-function materializeUserMessage(
+function materializeWholeMessage(
   row: ChunkRow,
-  chunk: UserMessageChunk
+  chunk: WholeMessageChunk
 ): MessageRow {
   const { message } = chunk
 
@@ -126,8 +126,8 @@ function materializeAssistantMessage(rows: ChunkRow[]): MessageRow {
       continue
     }
 
-    // Skip user-message chunks (shouldn't be in assistant messages, but guard)
-    if (isUserMessageChunk(chunk)) continue
+    // Skip whole-message chunks (shouldn't be in assistant messages, but guard)
+    if (isWholeMessageChunk(chunk)) continue
 
     // Process TanStack AI StreamChunk
     try {
@@ -170,7 +170,7 @@ function materializeAssistantMessage(rows: ChunkRow[]): MessageRow {
  * Materialize a MessageRow from collected chunk rows.
  *
  * Handles two formats:
- * 1. User messages: Single row with {type: 'user-message', message: UIMessage}
+ * 1. User messages: Single row with {type: 'whole-message', message: UIMessage}
  * 2. Assistant messages: Multiple rows with TanStack AI StreamChunks
  *
  * @param rows - Chunk rows for a single message
@@ -189,9 +189,9 @@ export function materializeMessage(rows: ChunkRow[]): MessageRow {
     throw new Error('Failed to parse first chunk')
   }
 
-  // Check if this is a complete user message
-  if (isUserMessageChunk(firstChunk)) {
-    return materializeUserMessage(sorted[0], firstChunk)
+  // Check if this is a whole message
+  if (isWholeMessageChunk(firstChunk)) {
+    return materializeWholeMessage(sorted[0], firstChunk)
   }
 
   // Otherwise, process as streamed assistant message
@@ -215,8 +215,8 @@ export function extractToolCalls(rows: ChunkRow[]): ToolCallRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    // Skip user-message chunks (not relevant for tool calls)
-    if (isUserMessageChunk(chunk)) continue
+    // Skip whole-message chunks (not relevant for tool calls)
+    if (isWholeMessageChunk(chunk)) continue
 
     // Handle tool_call chunks
     const streamChunk = chunk as StreamChunk
@@ -294,8 +294,8 @@ export function extractToolResults(rows: ChunkRow[]): ToolResultRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    // Skip user-message chunks
-    if (isUserMessageChunk(chunk)) continue
+    // Skip whole-message chunks
+    if (isWholeMessageChunk(chunk)) continue
 
     const streamChunk = chunk as StreamChunk
     if (isToolResultChunk(streamChunk)) {
@@ -331,8 +331,8 @@ export function extractApprovals(rows: ChunkRow[]): ApprovalRow[] {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    // Skip user-message chunks
-    if (isUserMessageChunk(chunk)) continue
+    // Skip whole-message chunks
+    if (isWholeMessageChunk(chunk)) continue
 
     const streamChunk = chunk as StreamChunk
 
@@ -375,7 +375,7 @@ function isMessageComplete(rows: ChunkRow[]): boolean {
   const firstChunk = parseChunk(sorted[0].chunk)
 
   // User messages are always complete
-  if (firstChunk && isUserMessageChunk(firstChunk)) {
+  if (firstChunk && isWholeMessageChunk(firstChunk)) {
     return true
   }
 
@@ -384,7 +384,7 @@ function isMessageComplete(rows: ChunkRow[]): boolean {
     const chunk = parseChunk(row.chunk)
     if (!chunk) continue
 
-    if (isUserMessageChunk(chunk)) continue
+    if (isWholeMessageChunk(chunk)) continue
 
     const streamChunk = chunk as StreamChunk
     if (isDoneChunk(streamChunk)) {

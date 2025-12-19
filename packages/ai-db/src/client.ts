@@ -385,7 +385,7 @@ export class DurableChatClient<
    * directly into a derived collection causes TanStack DB reconciliation bugs where
    * synced data becomes invisible while the optimistic mutation is pending.
    *
-   * By inserting into the chunks collection with the user-message format, the
+   * By inserting into the chunks collection with the whole-message format, the
    * optimistic row flows through the normal pipeline: chunks → collectedMessages → messages.
    */
   private createMessageAction() {
@@ -398,7 +398,7 @@ export class DurableChatClient<
 
         const createdAt = new Date()
 
-        // Insert into chunks collection with user-message format.
+        // Insert into chunks collection with whole-message format.
         // This flows through the live query pipeline: chunks → collectedMessages → messages
         this._collections.chunks.insert({
           id,
@@ -406,7 +406,7 @@ export class DurableChatClient<
           actorId: this.actorId,
           role,
           chunk: JSON.stringify({
-            type: 'user-message',
+            type: 'whole-message',
             message: {
               id: messageId,
               role,

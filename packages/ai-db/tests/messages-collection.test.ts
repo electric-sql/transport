@@ -366,12 +366,9 @@ describe('messages collection', () => {
         role: 'user' | 'assistant'
       }>({
         onMutate: ({ messageId, content, role }) => {
-          const seq = (optimisticSeq++).toString().padStart(16, '0')
-          const optimisticOffset = `zzzzzzzzzzzzzzzz_${seq}`
-
           const createdAt = new Date()
 
-          // Insert into chunks collection with user-message format
+          // Insert into chunks collection with whole-message format
           // This flows through the live query pipeline: chunks → collectedMessages → messages
           stream.insert({
             id: `${messageId}:0`, // Primary key: messageId:seq
@@ -379,7 +376,7 @@ describe('messages collection', () => {
             actorId: 'test-user',
             role, // Now using 'role' instead of 'actorType'
             chunk: JSON.stringify({
-              type: 'user-message',
+              type: 'whole-message',
               message: {
                 id: messageId,
                 role,
