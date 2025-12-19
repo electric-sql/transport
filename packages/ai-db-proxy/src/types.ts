@@ -84,6 +84,7 @@ export interface SendMessageRequest {
   actorId?: string
   actorType?: ActorType
   agent?: AgentSpec
+  txid?: string
 }
 
 export const sendMessageRequestSchema = z.object({
@@ -93,6 +94,7 @@ export const sendMessageRequestSchema = z.object({
   actorId: z.string().optional(),
   actorType: z.enum(['user', 'agent']).optional(),
   agent: agentSpecSchema.optional(),
+  txid: z.string().uuid().optional(),
 })
 
 /**
@@ -102,16 +104,16 @@ export interface ToolResultRequest {
   toolCallId: string
   output: unknown
   error?: string | null
-  /** Client-generated message ID for optimistic updates */
   messageId?: string
+  txid?: string
 }
 
 export const toolResultRequestSchema = z.object({
   toolCallId: z.string(),
   output: z.unknown(),
   error: z.string().nullable().optional(),
-  /** Client-generated message ID for optimistic updates */
   messageId: z.string().optional(),
+  txid: z.string().uuid().optional(),
 })
 
 /**
@@ -119,10 +121,12 @@ export const toolResultRequestSchema = z.object({
  */
 export interface ApprovalResponseRequest {
   approved: boolean
+  txid?: string
 }
 
 export const approvalResponseRequestSchema = z.object({
   approved: z.boolean(),
+  txid: z.string().uuid().optional(),
 })
 
 /**
@@ -231,8 +235,6 @@ export interface SessionState {
  * Options for AIDBSessionProtocol.
  */
 export interface AIDBProtocolOptions {
-  /** Base URL for the Durable Streams server */
   baseUrl: string
-  /** Storage implementation ('memory' | 'durable-object' | custom) */
   storage?: 'memory' | 'durable-object'
 }

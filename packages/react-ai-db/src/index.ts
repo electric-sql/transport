@@ -54,6 +54,7 @@ export {
 
   // Types
   type ActorType,
+  type ChunkRow,
   type StreamRow,
   type StreamRowWithOffset,
   type MessageRole,

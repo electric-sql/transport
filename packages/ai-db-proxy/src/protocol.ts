@@ -1,31 +1,24 @@
 /**
- * AIDBSessionProtocol - Wrapper Protocol implementation for AI DB.
+ * AIDBSessionProtocol - STATE-PROTOCOL implementation for AI DB.
  *
- * Extends the @durable-streams/wrapper-sdk to provide:
+ * Uses @durable-streams/client to write STATE-PROTOCOL events to Durable Streams.
+ * Provides:
  * - Session management
  * - LLM API proxying with stream teeing
  * - Agent webhook invocation
  * - Chunk framing with sequence numbers
  */
 
-import {
-  WrapperProtocol,
-  InMemoryStorage,
-  type Storage,
-  type Stream,
-} from '@durable-streams/wrapper-sdk'
-import type {
-  StreamRow,
-  StreamChunk,
-  AgentSpec,
-  SessionState,
-  AIDBProtocolOptions,
-  ActorType,
-} from './types'
+import { DurableStream } from '@durable-streams/client'
+import { sessionStateSchema } from '@electric-sql/ai-db'
+import type { StreamChunk, AgentSpec, SessionState, AIDBProtocolOptions } from './types'
+
+// Map role to the role type expected by the schema
+type MessageRole = 'user' | 'assistant' | 'system'
 
 /**
- * AIDBSessionProtocol extends WrapperProtocol to provide AI chat functionality
- * on top of Durable Streams.
+ * AIDBSessionProtocol writes STATE-PROTOCOL events to Durable Streams
+ * to provide AI chat functionality.
  *
  * @example
  * ```typescript
@@ -43,25 +36,23 @@ import type {
  * await protocol.invokeAgent(stream, 'session-123', agentSpec, messages)
  * ```
  */
-export class AIDBSessionProtocol extends WrapperProtocol {
+export class AIDBSessionProtocol {
+  private readonly baseUrl: string
+
+  /** Active streams by sessionId */
+  private streams = new Map<string, DurableStream>()
+
   /** Sequence counters per message for deduplication */
   private messageSeqs = new Map<string, number>()
 
   /** Active generation abort controllers */
   private activeAbortControllers = new Map<string, AbortController>()
 
-  constructor(options: AIDBProtocolOptions) {
-    const storage: Storage =
-      options.storage === 'durable-object'
-        ? // In production, use DurableObjectStorage
-          // For now, default to InMemoryStorage
-          new InMemoryStorage()
-        : new InMemoryStorage()
+  /** Session state (in-memory for now, could be persisted) */
+  private sessionStates = new Map<string, SessionState>()
 
-    super({
-      baseUrl: options.baseUrl,
-      storage,
-    })
+  constructor(options: AIDBProtocolOptions) {
+    this.baseUrl = options.baseUrl
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -70,15 +61,23 @@ export class AIDBSessionProtocol extends WrapperProtocol {
 
   /**
    * Create a new session stream.
+   *
+   * Calls PUT on the Durable Streams server to create the stream before
+   * returning the handle. This ensures clients can read from the stream
+   * immediately (empty streams return 200 with no data, not 404).
    */
-  async createSession(sessionId: string): Promise<Stream> {
-    const stream = await this.sdk.createStream({
-      url: `/v1/stream/sessions/${sessionId}`,
-      contentType: 'application/json',
+  async createSession(sessionId: string): Promise<DurableStream> {
+    const stream = new DurableStream({
+      url: `${this.baseUrl}/v1/stream/sessions/${sessionId}`,
     })
 
+    // Create the stream on the Durable Streams server
+    await stream.create({ contentType: 'application/json' })
+
+    this.streams.set(sessionId, stream)
+
     // Initialize session state
-    await this.initializeSessionState(sessionId)
+    this.initializeSessionState(sessionId)
 
     return stream
   }
@@ -86,8 +85,8 @@ export class AIDBSessionProtocol extends WrapperProtocol {
   /**
    * Get an existing session stream or create if not exists.
    */
-  async getOrCreateSession(sessionId: string): Promise<Stream> {
-    let stream = await this.sdk.getStream(sessionId)
+  async getOrCreateSession(sessionId: string): Promise<DurableStream> {
+    let stream = this.streams.get(sessionId)
     if (!stream) {
       stream = await this.createSession(sessionId)
     }
@@ -97,50 +96,48 @@ export class AIDBSessionProtocol extends WrapperProtocol {
   /**
    * Get an existing session stream.
    */
-  async getSession(sessionId: string): Promise<Stream | null> {
-    return await this.sdk.getStream(sessionId)
+  getSession(sessionId: string): DurableStream | undefined {
+    return this.streams.get(sessionId)
   }
 
   /**
    * Delete a session stream.
+   *
+   * Note: DurableStream is a lightweight handle (no persistent connection),
+   * so we just remove it from the map.
    */
-  async deleteSession(sessionId: string): Promise<void> {
-    await this.sdk.deleteStream(sessionId)
+  deleteSession(sessionId: string): void {
+    this.streams.delete(sessionId)
+    this.sessionStates.delete(sessionId)
   }
 
   /**
-   * Initialize session state in storage.
+   * Initialize session state.
    */
-  private async initializeSessionState(sessionId: string): Promise<void> {
-    const key = `sessions:${sessionId}:state`
-    const existing = await this.state.get<SessionState>(key)
-
-    if (!existing) {
+  private initializeSessionState(sessionId: string): void {
+    if (!this.sessionStates.has(sessionId)) {
       const initialState: SessionState = {
         createdAt: new Date().toISOString(),
         lastActivityAt: new Date().toISOString(),
         agents: [],
         activeGenerations: [],
       }
-      await this.state.set(key, initialState)
+      this.sessionStates.set(sessionId, initialState)
     }
   }
 
   /**
    * Update session's last activity timestamp.
    */
-  private async updateLastActivity(sessionId: string): Promise<void> {
-    const key = `sessions:${sessionId}:state`
-    const state = await this.state.get<SessionState>(key)
-
+  private updateLastActivity(sessionId: string): void {
+    const state = this.sessionStates.get(sessionId)
     if (state) {
       state.lastActivityAt = new Date().toISOString()
-      await this.state.set(key, state)
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
-  // Chunk Writing
+  // Chunk Writing (STATE-PROTOCOL)
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
@@ -161,67 +158,164 @@ export class AIDBSessionProtocol extends WrapperProtocol {
   }
 
   /**
-   * Write a chunk to the stream.
+   * Write a chunk to the stream using STATE-PROTOCOL format.
+   *
+   * Creates a change event with:
+   * - type: 'chunk'
+   * - key: `${messageId}:${seq}`
+   * - value: ChunkValue (without sessionId)
+   * - headers: { operation: 'insert', txid? }
+   *
+   * @param txid - Optional transaction ID for client sync confirmation
    */
   async writeChunk(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     messageId: string,
     actorId: string,
-    actorType: ActorType,
-    chunk: StreamChunk
+    role: MessageRole,
+    chunk: StreamChunk,
+    txid?: string
   ): Promise<void> {
-    const row: StreamRow = {
-      sessionId,
-      messageId,
-      actorId,
-      actorType,
-      chunk: JSON.stringify(chunk),
-      createdAt: new Date().toISOString(),
-      seq: this.getNextSeq(messageId),
-    }
+    const seq = this.getNextSeq(messageId)
 
-    await stream.append(row)
-    await this.updateLastActivity(sessionId)
+    // Create STATE-PROTOCOL change event using the schema helper
+    const event = sessionStateSchema.chunks.insert({
+      key: `${messageId}:${seq}`,
+      value: {
+        messageId,
+        actorId,
+        role,
+        chunk: JSON.stringify(chunk),
+        seq,
+        createdAt: new Date().toISOString(),
+      },
+      // Include txid in headers for client sync confirmation
+      ...(txid && { headers: { txid } }),
+    })
+
+    const result = await stream.append(event)
+    this.updateLastActivity(sessionId)
+
+    return result
   }
 
   /**
    * Write a user message to the stream as a complete UIMessage.
    *
-   * User messages are stored as complete objects in a single stream row
+   * User messages are stored as complete objects in a single chunk
    * because they are complete when sent (unlike assistant messages which stream).
+   *
+   * @param txid - Optional transaction ID for client sync confirmation
    */
   async writeUserMessage(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     messageId: string,
     actorId: string,
-    content: string
+    content: string,
+    txid?: string
   ): Promise<void> {
     // Create complete UIMessage
     const message = {
       id: messageId,
       role: 'user' as const,
       parts: [{ type: 'text' as const, content }],
-      createdAt: new Date(),
-    }
-
-    // Write as single user-message chunk
-    const row: StreamRow = {
-      sessionId,
-      messageId,
-      actorId,
-      actorType: 'user',
-      chunk: JSON.stringify({
-        type: 'user-message',
-        message,
-      }),
       createdAt: new Date().toISOString(),
-      seq: 0, // Single row, so seq is always 0
     }
 
-    await stream.append(row)
-    await this.updateLastActivity(sessionId)
+    // Create STATE-PROTOCOL change event for user message
+    const event = sessionStateSchema.chunks.insert({
+      key: `${messageId}:0`, // Single chunk, so seq is always 0
+      value: {
+        messageId,
+        actorId,
+        role: 'user' as const,
+        chunk: JSON.stringify({
+          type: 'user-message',
+          message,
+        }),
+        seq: 0,
+        createdAt: new Date().toISOString(),
+      },
+      // Include txid in headers for client sync confirmation
+      ...(txid && { headers: { txid } }),
+    })
+
+    const result = await stream.append(event)
+    this.updateLastActivity(sessionId)
+
+    return result
+  }
+
+  /**
+   * Write a presence update to the stream.
+   */
+  async writePresence(
+    stream: DurableStream,
+    sessionId: string,
+    actorId: string,
+    actorType: 'user' | 'agent',
+    status: 'online' | 'offline' | 'away',
+    name?: string
+  ): Promise<void> {
+    const event = sessionStateSchema.presence.upsert({
+      key: actorId,
+      value: {
+        actorId,
+        actorType,
+        name,
+        status,
+        lastSeenAt: new Date().toISOString(),
+      },
+    })
+
+    const result = await stream.append(event)
+    this.updateLastActivity(sessionId)
+
+    return result
+  }
+
+  /**
+   * Write an agent registration to the stream.
+   */
+  async writeAgentRegistration(
+    stream: DurableStream,
+    sessionId: string,
+    agent: AgentSpec
+  ): Promise<void> {
+    const event = sessionStateSchema.agents.upsert({
+      key: agent.id,
+      value: {
+        agentId: agent.id,
+        name: agent.name,
+        endpoint: agent.endpoint,
+        triggers: agent.triggers,
+      },
+    })
+
+    const result = await stream.append(event)
+    this.updateLastActivity(sessionId)
+
+    return result
+  }
+
+  /**
+   * Remove an agent registration from the stream.
+   */
+  async removeAgentRegistration(
+    stream: DurableStream,
+    sessionId: string,
+    agentId: string
+  ): Promise<void> {
+    const event = sessionStateSchema.agents.delete({
+      key: agentId,
+    })
+
+    const result = await stream.append(event)
+    this.updateLastActivity(sessionId)
+
+    return result
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -232,7 +326,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * Invoke an agent and stream its response to the durable stream.
    */
   async invokeAgent(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     agent: AgentSpec,
     messageHistory: Array<{ role: string; content: string }>
@@ -242,7 +336,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
 
     // Track active generation
     this.activeAbortControllers.set(messageId, abortController)
-    await this.addActiveGeneration(sessionId, messageId)
+    this.addActiveGeneration(sessionId, messageId)
 
     try {
       // Prepare request body
@@ -278,27 +372,26 @@ export class AIDBSessionProtocol extends WrapperProtocol {
           abortController.signal
         )
       }
-      // No wrapper chunks needed - TanStack AI's 'done' chunk signals completion
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         // Write stop chunk on abort
-        await this.writeChunk(stream, sessionId, messageId, agent.id, 'agent', {
+        await this.writeChunk(stream, sessionId, messageId, agent.id, 'assistant', {
           type: 'stop',
           reason: 'aborted',
-        })
+        } as StreamChunk)
       } else {
         // Write error chunk
-        await this.writeChunk(stream, sessionId, messageId, agent.id, 'agent', {
+        await this.writeChunk(stream, sessionId, messageId, agent.id, 'assistant', {
           type: 'error',
           error: (error as Error).message,
-        })
+        } as StreamChunk)
       }
       throw error
     } finally {
       // Clean up
       this.clearSeq(messageId)
       this.activeAbortControllers.delete(messageId)
-      await this.removeActiveGeneration(sessionId, messageId)
+      this.removeActiveGeneration(sessionId, messageId)
     }
   }
 
@@ -306,7 +399,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * Stream agent response, parsing SSE and writing chunks to durable stream.
    */
   private async streamAgentResponse(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     messageId: string,
     agentId: string,
@@ -345,7 +438,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
                 sessionId,
                 messageId,
                 agentId,
-                'agent',
+                'assistant',
                 chunk
               )
             } catch {
@@ -361,7 +454,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
         if (data !== '[DONE]') {
           try {
             const chunk = JSON.parse(data) as StreamChunk
-            await this.writeChunk(stream, sessionId, messageId, agentId, 'agent', chunk)
+            await this.writeChunk(stream, sessionId, messageId, agentId, 'assistant', chunk)
           } catch {
             // Skip malformed JSON
           }
@@ -380,15 +473,18 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * Register an agent for a session.
    */
   async registerAgent(sessionId: string, agent: AgentSpec): Promise<void> {
-    const key = `sessions:${sessionId}:state`
-    const state = await this.state.get<SessionState>(key)
-
+    const state = this.sessionStates.get(sessionId)
     if (state) {
       // Remove existing agent with same ID
       state.agents = state.agents.filter((a) => a.id !== agent.id)
       // Add new agent
       state.agents.push(agent)
-      await this.state.set(key, state)
+
+      // Also write to stream so clients can see registered agents
+      const stream = this.streams.get(sessionId)
+      if (stream) {
+        await this.writeAgentRegistration(stream, sessionId, agent)
+      }
     }
   }
 
@@ -405,21 +501,23 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * Unregister an agent from a session.
    */
   async unregisterAgent(sessionId: string, agentId: string): Promise<void> {
-    const key = `sessions:${sessionId}:state`
-    const state = await this.state.get<SessionState>(key)
-
+    const state = this.sessionStates.get(sessionId)
     if (state) {
       state.agents = state.agents.filter((a) => a.id !== agentId)
-      await this.state.set(key, state)
+
+      // Also remove from stream
+      const stream = this.streams.get(sessionId)
+      if (stream) {
+        await this.removeAgentRegistration(stream, sessionId, agentId)
+      }
     }
   }
 
   /**
    * Get all registered agents for a session.
    */
-  async getRegisteredAgents(sessionId: string): Promise<AgentSpec[]> {
-    const key = `sessions:${sessionId}:state`
-    const state = await this.state.get<SessionState>(key)
+  getRegisteredAgents(sessionId: string): AgentSpec[] {
+    const state = this.sessionStates.get(sessionId)
     return state?.agents ?? []
   }
 
@@ -427,12 +525,12 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * Notify registered agents based on trigger mode.
    */
   async notifyRegisteredAgents(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     triggerType: 'all' | 'user-messages',
     messageHistory: Array<{ role: string; content: string }>
   ): Promise<void> {
-    const agents = await this.getRegisteredAgents(sessionId)
+    const agents = this.getRegisteredAgents(sessionId)
 
     for (const agent of agents) {
       const shouldTrigger =
@@ -456,43 +554,27 @@ export class AIDBSessionProtocol extends WrapperProtocol {
   /**
    * Add an active generation to tracking.
    */
-  private async addActiveGeneration(
-    sessionId: string,
-    messageId: string
-  ): Promise<void> {
-    const key = `sessions:${sessionId}:state`
-    const state = await this.state.get<SessionState>(key)
-
-    if (state) {
-      if (!state.activeGenerations.includes(messageId)) {
-        state.activeGenerations.push(messageId)
-        await this.state.set(key, state)
-      }
+  private addActiveGeneration(sessionId: string, messageId: string): void {
+    const state = this.sessionStates.get(sessionId)
+    if (state && !state.activeGenerations.includes(messageId)) {
+      state.activeGenerations.push(messageId)
     }
   }
 
   /**
    * Remove an active generation from tracking.
    */
-  private async removeActiveGeneration(
-    sessionId: string,
-    messageId: string
-  ): Promise<void> {
-    const key = `sessions:${sessionId}:state`
-    const state = await this.state.get<SessionState>(key)
-
+  private removeActiveGeneration(sessionId: string, messageId: string): void {
+    const state = this.sessionStates.get(sessionId)
     if (state) {
-      state.activeGenerations = state.activeGenerations.filter(
-        (id) => id !== messageId
-      )
-      await this.state.set(key, state)
+      state.activeGenerations = state.activeGenerations.filter((id) => id !== messageId)
     }
   }
 
   /**
    * Stop an active generation.
    */
-  async stopGeneration(sessionId: string, messageId: string | null): Promise<void> {
+  stopGeneration(sessionId: string, messageId: string | null): void {
     if (messageId) {
       // Stop specific generation
       const controller = this.activeAbortControllers.get(messageId)
@@ -501,9 +583,7 @@ export class AIDBSessionProtocol extends WrapperProtocol {
       }
     } else {
       // Stop all active generations for session
-      const key = `sessions:${sessionId}:state`
-      const state = await this.state.get<SessionState>(key)
-
+      const state = this.sessionStates.get(sessionId)
       if (state) {
         for (const id of state.activeGenerations) {
           const controller = this.activeAbortControllers.get(id)
@@ -523,45 +603,52 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * Write a tool result to the stream.
    *
    * @param messageId - Client-generated message ID for optimistic updates.
+   * @param txid - Optional transaction ID for client sync confirmation
    */
   async writeToolResult(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     messageId: string,
     actorId: string,
     toolCallId: string,
     output: unknown,
-    error: string | null
+    error: string | null,
+    txid?: string
   ): Promise<void> {
-    await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
+    const result = await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
       type: 'tool-result',
       toolCallId,
       output,
       error,
-    })
+    } as StreamChunk, txid)
 
     this.clearSeq(messageId)
+    return result
   }
 
   /**
    * Write an approval response to the stream.
+   *
+   * @param txid - Optional transaction ID for client sync confirmation
    */
   async writeApprovalResponse(
-    stream: Stream,
+    stream: DurableStream,
     sessionId: string,
     actorId: string,
     approvalId: string,
-    approved: boolean
+    approved: boolean,
+    txid?: string
   ): Promise<void> {
     const messageId = crypto.randomUUID()
 
-    await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
+    const result = await this.writeChunk(stream, sessionId, messageId, actorId, 'user', {
       type: 'approval-response',
       approvalId,
       approved,
-    })
+    } as StreamChunk, txid)
 
     this.clearSeq(messageId)
+    return result
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -581,21 +668,18 @@ export class AIDBSessionProtocol extends WrapperProtocol {
     const targetSessionId = newSessionId ?? crypto.randomUUID()
 
     // Get the source stream
-    const sourceStream = await this.sdk.getStream(sessionId)
+    const sourceStream = this.streams.get(sessionId)
     if (!sourceStream) {
       throw new Error(`Session ${sessionId} not found`)
     }
 
     // Create the new session
-    const targetStream = await this.createSession(targetSessionId)
+    await this.createSession(targetSessionId)
 
     // Copy state (agents, etc.)
-    const sourceStateKey = `sessions:${sessionId}:state`
-    const sourceState = await this.state.get<SessionState>(sourceStateKey)
-
+    const sourceState = this.sessionStates.get(sessionId)
     if (sourceState) {
-      const targetStateKey = `sessions:${targetSessionId}:state`
-      await this.state.set(targetStateKey, {
+      this.sessionStates.set(targetSessionId, {
         ...sourceState,
         createdAt: new Date().toISOString(),
         lastActivityAt: new Date().toISOString(),
@@ -623,22 +707,10 @@ export class AIDBSessionProtocol extends WrapperProtocol {
    * This reads the stream and materializes messages.
    */
   async getMessageHistory(
-    sessionId: string
+    _sessionId: string
   ): Promise<Array<{ role: string; content: string }>> {
     // TODO: Read from stream and materialize messages
     // For now, return empty array - client should pass history
     return []
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Lifecycle Hooks (from Wrapper SDK)
-  // ═══════════════════════════════════════════════════════════════════════
-
-  async onStreamCreated(stream: Stream, metadata: unknown): Promise<void> {
-    console.log(`Session stream created: ${stream.id}`, metadata)
-  }
-
-  async onMessageAppended(stream: Stream, data: unknown): Promise<void> {
-    // Can be used for analytics, logging, etc.
   }
 }

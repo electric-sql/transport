@@ -12,7 +12,13 @@ import type {
   AnyClientTool,
 } from '@tanstack/ai'
 import type { Collection } from '@tanstack/db'
-import type { StandardSchemaV1 } from '@standard-schema/spec'
+import type { LiveMode } from '@durable-streams/state'
+
+// Re-export schema types
+export type { ChunkRow, ChunkValue, PresenceRow, AgentRow } from './schema'
+
+// Re-export LiveMode from @durable-streams/state
+export type { LiveMode }
 
 // ============================================================================
 // Stream Protocol Types
@@ -44,78 +50,33 @@ export type DurableStreamChunk = UserMessageChunk | StreamChunk
 export type ActorType = 'user' | 'agent'
 
 /**
- * A minimal envelope for routing and grouping. Chunk content is opaque to the protocol.
+ * Message role types (aligned with TanStack AI UIMessage.role).
  */
-export interface StreamRow {
-  /** Session identifier */
-  sessionId: string
-  /** Message identifier */
-  messageId: string
-  /** Actor identifier (auto-generated if not provided) */
-  actorId: string
-  /** Actor type */
-  actorType: ActorType
-  /** JSON-encoded TanStack AI StreamChunk (opaque to protocol) */
-  chunk: string
-  /** ISO 8601 timestamp */
-  createdAt: string
-  /** Sequence within message (for deduplication on resume) */
-  seq: number
-}
-
-/**
- * StreamRow extended with offset after client reads from stream.
- */
-export interface StreamRowWithOffset extends StreamRow {
-  /** Attached by client from result.offset (batch-level) */
-  offset: string
-}
-
-// Zod schemas for validation
-export const streamRowSchema = z.object({
-  sessionId: z.string(),
-  messageId: z.string(),
-  actorId: z.string(),
-  actorType: z.enum(['user', 'agent']),
-  chunk: z.string(),
-  createdAt: z.string(),
-  seq: z.number(),
-})
-
-export const streamRowWithOffsetSchema = streamRowSchema.extend({
-  offset: z.string(),
-})
+export type MessageRole = 'user' | 'assistant' | 'system'
 
 // ============================================================================
 // Message Collection Types
 // ============================================================================
 
 /**
- * Message role types.
- */
-export type MessageRole = 'user' | 'assistant' | 'system'
-
-/**
  * Materialized message row from stream.
+ *
+ * Messages are materialized from ChunkRow arrays via the live query pipeline.
+ * User messages (single chunk) and assistant messages (multiple streaming chunks)
+ * are both represented with this type.
  */
 export interface MessageRow {
-  /** Message identifier (same as messageId from stream) */
+  /** Message identifier (same as messageId from chunks) */
   id: string
   /** Message role */
   role: MessageRole
   /** Materialized message parts from parsed chunks */
   parts: MessagePart[]
-  /** Actor identifier */
+  /** Actor identifier who wrote this message */
   actorId: string
-  /** Actor type */
-  actorType: ActorType
-  /** Whether the finish chunk has been received */
+  /** Whether the message is complete (finish chunk received) */
   isComplete: boolean
-  /** First chunk offset (for forking) */
-  startOffset: string
-  /** Last chunk offset (null if still streaming) */
-  endOffset: string | null
-  /** Message creation timestamp */
+  /** Message creation timestamp (from first chunk) */
   createdAt: Date
 }
 
@@ -133,8 +94,8 @@ export interface ActiveGenerationRow {
   actorId: string
   /** When generation started */
   startedAt: Date
-  /** Streaming progress cursor */
-  lastChunkOffset: string
+  /** Last chunk sequence number */
+  lastChunkSeq: number
   /** When last chunk was received */
   lastChunkAt: Date
 }
@@ -235,29 +196,15 @@ export interface ApprovalRow {
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
 /**
- * Session participant information.
- */
-export interface SessionParticipant {
-  /** Actor identifier */
-  actorId: string
-  /** Actor type */
-  actorType: ActorType
-  /** Optional display name */
-  name?: string
-  /** Last activity timestamp */
-  lastSeenAt: Date
-}
-
-/**
- * Session metadata row (local state only, not derived).
+ * Session metadata row (local state only, not derived from stream).
  */
 export interface SessionMetaRow {
   /** Session identifier */
   sessionId: string
   /** Current connection status */
   connectionStatus: ConnectionStatus
-  /** Last synced offset */
-  lastSyncedOffset: string | null
+  /** Last synced transaction ID (for txid tracking) */
+  lastSyncedTxId: string | null
   /** Last sync timestamp */
   lastSyncedAt: Date | null
   /** Error information if any */
@@ -327,10 +274,12 @@ export interface AgentSpec {
   bodyTemplate?: Record<string, unknown>
 }
 
-
 // ============================================================================
 // Collection Types
 // ============================================================================
+
+// Import types from schema
+import type { ChunkRow, PresenceRow, AgentRow } from './schema'
 
 /**
  * All collections exposed by DurableChatClient.
@@ -339,13 +288,16 @@ export interface AgentSpec {
  * functions needed to access the data. This is achieved through a two-stage
  * pipeline: aggregate first (groupBy + collect), then materialize (fn.select).
  *
- * Note: The actual types are inferred from the createCollections() method
- * in DurableChatClient. This interface is kept for documentation purposes
- * and for consumers who want to reference the collection types explicitly.
+ * The `chunks`, `presence`, and `agents` collections are synced directly from
+ * the Durable Stream via stream-db. Other collections are derived from chunks.
  */
 export interface DurableChatCollections {
-  /** Root stream collection synced from Durable Stream */
-  stream: Collection<StreamRowWithOffset>
+  /** Root chunks collection synced from Durable Stream via stream-db */
+  chunks: Collection<ChunkRow>
+  /** Presence collection - online status of users and agents (from stream-db) */
+  presence: Collection<PresenceRow>
+  /** Agents collection - registered webhook agents (from stream-db) */
+  agents: Collection<AgentRow>
   /** Materialized messages (keyed by messageId) */
   messages: Collection<MessageRow>
   /** Active generations - messages currently being streamed (keyed by messageId) */
@@ -356,8 +308,6 @@ export interface DurableChatCollections {
   toolResults: Collection<ToolResultRow>
   /** Materialized approvals (keyed by approvalId) */
   approvals: Collection<ApprovalRow>
-  /** Session participants derived from stream (keyed by actorId) */
-  sessionParticipants: Collection<SessionParticipant>
   /** Session metadata collection (local state) */
   sessionMeta: Collection<SessionMetaRow>
   /** Session statistics (keyed by sessionId) */
@@ -416,11 +366,12 @@ export interface DurableChatClientOptions<
   }
 
   /**
-   * Pre-created stream collection for testing.
-   * If provided, the client will use this instead of creating its own.
+   * Pre-created SessionDB for testing.
+   * If provided, the client will use this instead of creating its own via createSessionDB().
+   * This allows tests to inject mock collections with controlled data.
    * @internal
    */
-  streamCollection?: Collection<StreamRowWithOffset>
+  sessionDB?: import('./collection').SessionDB
 }
 
 // ============================================================================
@@ -482,27 +433,27 @@ export interface ForkResult {
 }
 
 // ============================================================================
-// Session Stream Configuration Types
+// Session DB Configuration Types
 // ============================================================================
 
 /**
- * Configuration for creating a session stream collection.
+ * Configuration for creating a session stream-db.
  */
-export interface DurableSessionStreamConfig {
+export interface SessionDBConfig {
   /** Session identifier */
   sessionId: string
   /** Base URL for the proxy */
   baseUrl: string
-  /** Initial offset to resume from */
-  initialOffset?: string
   /** Additional headers for stream requests */
   headers?: Record<string, string>
-  /** Optional schema for validation */
-  schema?: StandardSchemaV1<StreamRowWithOffset>
   /**
    * AbortSignal to cancel the stream sync.
    * When aborted, the sync will stop and cleanup will be called.
    */
   signal?: AbortSignal
+  // /**
+  //  * Live mode for the stream connection.
+  //  * Defaults to "sse" for efficient real-time updates.
+  //  */
+  // liveMode?: LiveMode
 }
-

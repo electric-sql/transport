@@ -8,18 +8,11 @@
  * Collections contain fully materialized objects - no helper functions needed.
  */
 
-// Stream collection (root - synced from Durable Stream)
-export {
-  createStreamCollectionOptions,
-  type StreamCollectionOptions,
-} from './stream'
-
 // Messages collection (two-stage pipeline)
 export {
   createCollectedMessagesCollection,
   createMessagesCollection,
   createMessagesPipeline,
-  waitForKey,
   type CollectedMessageRows,
   type CollectedMessagesCollectionOptions,
   type MessagesCollectionOptions,
@@ -59,12 +52,6 @@ export {
   updateSyncProgress,
   type SessionMetaCollectionOptions,
 } from './session-meta'
-
-// Session participants collection (two-stage pipeline)
-export {
-  createSessionParticipantsCollection,
-  type SessionParticipantsCollectionOptions,
-} from './session-participants'
 
 // Session statistics collection (two-stage pipeline)
 export {

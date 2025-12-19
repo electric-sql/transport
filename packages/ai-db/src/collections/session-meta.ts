@@ -63,7 +63,7 @@ export function createInitialSessionMeta(sessionId: string): SessionMetaRow {
   return {
     sessionId,
     connectionStatus: 'disconnected',
-    lastSyncedOffset: null,
+    lastSyncedTxId: null,
     lastSyncedAt: null,
     error: null,
   }
@@ -93,16 +93,16 @@ export function updateConnectionStatus(
  * Update session metadata with sync progress.
  *
  * @param meta - Current metadata
- * @param offset - Last synced offset
+ * @param txId - Last synced transaction ID
  * @returns Updated metadata
  */
 export function updateSyncProgress(
   meta: SessionMetaRow,
-  offset: string
+  txId: string
 ): SessionMetaRow {
   return {
     ...meta,
-    lastSyncedOffset: offset,
+    lastSyncedTxId: txId,
     lastSyncedAt: new Date(),
     connectionStatus: 'connected',
     error: null,

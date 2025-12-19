@@ -80,22 +80,17 @@ export interface UseDurableChatReturn<
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Whether the client is ready (created and available).
-   * Use this to check if client/collections are safe to access.
-   */
-  isReady: boolean
-
-  /**
    * The underlying DurableChatClient instance.
-   * May be undefined until the client is created (check isReady first).
+   * Always available - created synchronously on hook initialization.
    */
-  client: DurableChatClient<TTools> | undefined
+  client: DurableChatClient<TTools>
 
   /**
    * All collections for custom queries.
-   * May be undefined until the client is created (check isReady first).
+   * Always available - use directly with useLiveQuery.
+   * Data syncs when connectionStatus is 'connected'.
    */
-  collections: DurableChatCollections | undefined
+  collections: DurableChatCollections
 
   /** Current connection status */
   connectionStatus: ConnectionStatus

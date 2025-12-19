@@ -14,13 +14,19 @@ import type { UseDurableChatOptions, UseDurableChatReturn } from './types'
 /**
  * React hook for durable chat with TanStack AI-compatible API.
  *
+ * The client and collections are always available synchronously.
+ * Connection state is managed separately via connectionStatus.
+ *
  * @example Basic usage
  * ```typescript
  * function Chat() {
- *   const { messages, sendMessage, isLoading } = useDurableChat({
+ *   const { messages, sendMessage, isLoading, collections } = useDurableChat({
  *     sessionId: 'my-session',
  *     proxyUrl: 'http://localhost:4000',
  *   })
+ *
+ *   // collections is always defined - use directly with useLiveQuery
+ *   const chunks = useLiveQuery(q => q.from({ row: collections.chunks }), [collections.chunks])
  *
  *   return (
  *     <div>
@@ -36,7 +42,7 @@ export function useDurableChat<
 >(options: UseDurableChatOptions<TTools>): UseDurableChatReturn<TTools> {
   const { autoConnect = true, client: providedClient, ...clientOptions } = options
 
-  // Core state
+  // Reactive state - must be declared first (before client creation uses them)
   const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? [])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | undefined>()
@@ -44,200 +50,185 @@ export function useDurableChat<
     'disconnected' | 'connecting' | 'connected' | 'error'
   >('disconnected')
 
-  // Client state - null until effect creates it
-  const [client, setClient] = useState<DurableChatClient<TTools> | null>(
-    providedClient ?? null
-  )
+  // Error handler ref - allows client's onError to call setError
+  const onErrorRef = useRef<(err: Error) => void>(() => {})
+  onErrorRef.current = (err) => {
+    setError(err)
+    clientOptions.onError?.(err)
+  }
 
-  // Create and manage client lifecycle in useEffect (where side effects belong)
-  useEffect(() => {
-    let activeClient: DurableChatClient<TTools>
-    let shouldDisposeOnCleanup = false
+  // Create client synchronously - always available immediately
+  // Use ref to persist across renders and track when we need a new client
+  const clientRef = useRef<{ client: DurableChatClient<TTools>; key: string } | null>(null)
+  const key = `${clientOptions.sessionId}:${clientOptions.proxyUrl}`
 
-    // If a client was provided externally, use it (for testing)
-    if (providedClient) {
-      activeClient = providedClient
-      setClient(providedClient)
-    } else {
-      // Create the client (side effect - belongs in useEffect)
-      activeClient = new DurableChatClient<TTools>({
+  // Create or recreate client when key changes
+  if (providedClient) {
+    // Use provided client (for testing)
+    if (!clientRef.current || clientRef.current.client !== providedClient) {
+      clientRef.current = { client: providedClient, key: 'provided' }
+    }
+  } else if (!clientRef.current || clientRef.current.key !== key) {
+    // Dispose old client if exists
+    clientRef.current?.client.dispose()
+    // Create new client synchronously
+    clientRef.current = {
+      client: new DurableChatClient<TTools>({
         ...clientOptions,
-        onError: (err) => {
+        onError: (err) => onErrorRef.current(err),
+      } as DurableChatClientOptions<TTools>),
+      key,
+    }
+  }
+
+  const client = clientRef.current.client
+
+  // Side effects: connect, subscribe, cleanup
+  useEffect(() => {
+    const unsubscribes: Array<{ unsubscribe: () => void }> = []
+
+    // Subscribe to collection changes
+    const collections = client.collections
+    unsubscribes.push(
+      collections.activeGenerations.subscribeChanges(() => {
+        setIsLoading(client.isLoading)
+      }),
+      collections.messages.subscribeChanges(() => {
+        setMessages(client.messages as UIMessage[])
+      }),
+      collections.sessionMeta.subscribeChanges(() => {
+        setConnectionStatus(client.connectionStatus)
+      })
+    )
+
+    // Sync initial state
+    setMessages(client.messages as UIMessage[])
+    setIsLoading(client.isLoading)
+    setConnectionStatus(client.connectionStatus)
+
+    // Auto-connect if enabled and not already connected
+    if (autoConnect && client.connectionStatus === 'disconnected') {
+      setConnectionStatus('connecting')
+      client
+        .connect()
+        .then(() => {
+          setConnectionStatus('connected')
+          setMessages(client.messages as UIMessage[])
+        })
+        .catch((err) => {
+          setConnectionStatus('error')
           setError(err)
-          clientOptions.onError?.(err)
-        },
-      } as DurableChatClientOptions<TTools>)
-
-      setClient(activeClient)
-      shouldDisposeOnCleanup = true
-
-      // Reset state for new client
-      setMessages([])
-      setIsLoading(false)
-      setError(undefined)
-      setConnectionStatus('disconnected')
-
-      // Auto-connect if enabled
-      if (autoConnect) {
-        setConnectionStatus('connecting')
-        activeClient
-          .connect()
-          .then(() => {
-            setConnectionStatus('connected')
-            setMessages(activeClient.messages as UIMessage[])
-          })
-          .catch((err) => {
-            setConnectionStatus('error')
-            setError(err)
-          })
-      }
+        })
     }
 
-    // Subscribe to collection changes (for both provided and created clients)
-    const unsubscribes = [
-      activeClient.collections.activeGenerations.subscribeChanges(() => {
-        setIsLoading(activeClient.isLoading)
-      }),
-      activeClient.collections.messages.subscribeChanges((changes) => {
-        setMessages(activeClient.messages as UIMessage[])
-      }),
-      activeClient.collections.sessionMeta.subscribeChanges(() => {
-        setConnectionStatus(activeClient.connectionStatus)
-      }),
-    ]
-
-    // Cleanup: unsubscribe and optionally dispose client
-    // In Strict Mode: this runs before the second mount, cleaning up the first client
+    // Cleanup: unsubscribe (disposal happens on key change or unmount via ref logic)
     return () => {
       unsubscribes.forEach((u) => u.unsubscribe())
-      if (shouldDisposeOnCleanup) {
-        activeClient.dispose()
+      // Only dispose if this is not a provided client
+      if (!providedClient) {
+        client.dispose()
       }
     }
-    // Only recreate client when session or proxy changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providedClient, clientOptions.sessionId, clientOptions.proxyUrl, autoConnect])
+  }, [client, autoConnect])
 
-  // Stable callback refs - avoid recreating on every client change
-  const clientRef = useRef(client)
-  clientRef.current = client
-
+  // Callbacks - client is always defined, no null checks needed
   const sendMessage = useCallback(async (content: string) => {
-    const c = clientRef.current
-    if (!c) throw new Error('Client not initialized')
     try {
-      await c.sendMessage(content)
+      await client.sendMessage(content)
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)))
       throw err
     }
-  }, [])
+  }, [client])
 
   const append = useCallback(
     async (message: UIMessage | { role: string; content: string }) => {
-      const c = clientRef.current
-      if (!c) throw new Error('Client not initialized')
       try {
-        await c.append(message)
+        await client.append(message)
       } catch (err) {
         setError(err instanceof Error ? err : new Error(String(err)))
         throw err
       }
     },
-    []
+    [client]
   )
 
   const reload = useCallback(async () => {
-    const c = clientRef.current
-    if (!c) throw new Error('Client not initialized')
     try {
-      await c.reload()
+      await client.reload()
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)))
       throw err
     }
-  }, [])
+  }, [client])
 
   const stop = useCallback(() => {
-    clientRef.current?.stop()
-  }, [])
+    client.stop()
+  }, [client])
 
   const clear = useCallback(() => {
-    clientRef.current?.clear()
+    client.clear()
     setMessages([])
-  }, [])
+  }, [client])
 
   const addToolResult = useCallback(
     async (result: Parameters<DurableChatClient<TTools>['addToolResult']>[0]) => {
-      const c = clientRef.current
-      if (!c) throw new Error('Client not initialized')
-      await c.addToolResult(result)
+      await client.addToolResult(result)
     },
-    []
+    [client]
   )
 
   const addToolApprovalResponse = useCallback(
     async (response: Parameters<DurableChatClient<TTools>['addToolApprovalResponse']>[0]) => {
-      const c = clientRef.current
-      if (!c) throw new Error('Client not initialized')
-      await c.addToolApprovalResponse(response)
+      await client.addToolApprovalResponse(response)
     },
-    []
+    [client]
   )
 
   const fork = useCallback(
     async (opts?: Parameters<DurableChatClient<TTools>['fork']>[0]) => {
-      const c = clientRef.current
-      if (!c) throw new Error('Client not initialized')
-      return c.fork(opts)
+      return client.fork(opts)
     },
-    []
+    [client]
   )
 
   const registerAgents = useCallback(
     async (agents: Parameters<DurableChatClient<TTools>['registerAgents']>[0]) => {
-      const c = clientRef.current
-      if (!c) throw new Error('Client not initialized')
-      await c.registerAgents(agents)
+      await client.registerAgents(agents)
     },
-    []
+    [client]
   )
 
   const unregisterAgent = useCallback(async (agentId: string) => {
-    const c = clientRef.current
-    if (!c) throw new Error('Client not initialized')
-    await c.unregisterAgent(agentId)
-  }, [])
+    await client.unregisterAgent(agentId)
+  }, [client])
 
   const connect = useCallback(async () => {
-    const c = clientRef.current
-    if (!c) throw new Error('Client not initialized')
     setConnectionStatus('connecting')
     try {
-      await c.connect()
+      await client.connect()
       setConnectionStatus('connected')
-      setMessages(c.messages as UIMessage[])
+      setMessages(client.messages as UIMessage[])
     } catch (err) {
       setConnectionStatus('error')
       setError(err instanceof Error ? err : new Error(String(err)))
       throw err
     }
-  }, [])
+  }, [client])
 
   const disconnect = useCallback(() => {
-    clientRef.current?.disconnect()
+    client.disconnect()
     setConnectionStatus('disconnected')
-  }, [])
+  }, [client])
 
   const pause = useCallback(() => {
-    clientRef.current?.pause()
-  }, [])
+    client.pause()
+  }, [client])
 
   const resume = useCallback(async () => {
-    const c = clientRef.current
-    if (!c) throw new Error('Client not initialized')
-    await c.resume()
-  }, [])
+    await client.resume()
+  }, [client])
 
   return {
     // TanStack AI useChat compatible
@@ -253,9 +244,8 @@ export function useDurableChat<
     addToolApprovalResponse,
 
     // Durable extensions
-    isReady: client !== null,
-    client: client ?? undefined,
-    collections: client?.collections,
+    client,
+    collections: client.collections,
     connectionStatus,
     fork,
     registerAgents,

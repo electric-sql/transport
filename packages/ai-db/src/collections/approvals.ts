@@ -12,6 +12,7 @@ import type { Collection } from '@tanstack/db'
 import type { ApprovalRow } from '../types'
 import { extractApprovals } from '../materialize'
 import type { CollectedMessageRows } from './messages'
+import type { ChunkRow } from '../schema'
 
 // ============================================================================
 // Approvals Collection

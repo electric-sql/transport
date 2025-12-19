@@ -1,17 +1,17 @@
 /**
  * Tests for the messages collection live query pipeline.
  *
- * Verifies that the two-stage pipeline (stream → collectedMessages → messages)
+ * Verifies that the two-stage pipeline (chunks → collectedMessages → messages)
  * correctly materializes messages from streamed data.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
-  createMockStreamCollection,
+  createMockChunksCollection,
   loadTestData,
-  addOffsets,
   getMessageRows,
   getMessageIds,
+  streamRowsToChunkRows,
   flushPromises,
   collectChanges,
   TEST_MESSAGE_IDS,
@@ -20,8 +20,10 @@ import {
 import {
   createCollectedMessagesCollection,
   createMessagesCollection,
+  type CollectedMessageRows,
 } from '../src/collections/messages'
-import type { StreamRowWithOffset, MessageRow } from '../src/types'
+import type { ChunkRow } from '../src/schema'
+import type { MessageRow } from '../src/types'
 import type { Collection } from '@tanstack/db'
 import { createOptimisticAction } from '@tanstack/db'
 
@@ -30,22 +32,22 @@ describe('messages collection', () => {
   const messageIds = getMessageIds(testData)
 
   // Collections to be set up in beforeEach
-  let streamCollection: Collection<StreamRowWithOffset>
-  let controller: ReturnType<typeof createMockStreamCollection>['controller']
-  let collectedMessagesCollection: Collection<{ messageId: string; rows: StreamRowWithOffset[]; startedAt: string | null | undefined }>
+  let chunksCollection: Collection<ChunkRow>
+  let controller: ReturnType<typeof createMockChunksCollection>['controller']
+  let collectedMessagesCollection: Collection<CollectedMessageRows>
   let messagesCollection: Collection<MessageRow>
 
   beforeEach(() => {
-    // Create mock stream collection
-    const mock = createMockStreamCollection('test-session')
-    streamCollection = mock.collection
+    // Create mock chunks collection
+    const mock = createMockChunksCollection('test-session')
+    chunksCollection = mock.collection
     controller = mock.controller
 
     // Create the two-stage pipeline
     // Note: derived collections use startSync: true, so they start syncing immediately
     collectedMessagesCollection = createCollectedMessagesCollection({
       sessionId: 'test-session',
-      streamCollection,
+      chunksCollection,
     })
 
     messagesCollection = createMessagesCollection({
@@ -53,8 +55,8 @@ describe('messages collection', () => {
       collectedMessagesCollection,
     })
 
-    // Initialize stream collection
-    streamCollection.preload()
+    // Initialize chunks collection
+    chunksCollection.preload()
     controller.markReady()
   })
 
@@ -66,7 +68,7 @@ describe('messages collection', () => {
     it('should materialize a user message from stream row', async () => {
       // Get first user message rows
       const userMessageId = TEST_MESSAGE_IDS.USER_1
-      const userMessageRows = addOffsets(getMessageRows(testData, userMessageId))
+      const userMessageRows = getMessageRows(testData, userMessageId)
 
       // Emit the user message (single row for user messages)
       controller.emit(userMessageRows)
@@ -86,15 +88,15 @@ describe('messages collection', () => {
 
     it('should set correct metadata for user message', async () => {
       const userMessageId = TEST_MESSAGE_IDS.USER_1
-      const userMessageRows = addOffsets(getMessageRows(testData, userMessageId))
+      const userMessageRows = getMessageRows(testData, userMessageId)
 
       controller.emit(userMessageRows)
       await flushPromises()
 
       const message = messagesCollection.get(userMessageId)
-      expect(message?.actorType).toBe('user')
-      expect(message?.startOffset).toBeDefined()
-      expect(message?.endOffset).toBeDefined()
+      expect(message?.role).toBe('user')
+      expect(message?.actorId).toBeDefined()
+      expect(message?.isComplete).toBe(true)
       expect(message?.createdAt).toBeInstanceOf(Date)
     })
   })
@@ -107,14 +109,14 @@ describe('messages collection', () => {
     it('should materialize both messages in correct order', async () => {
       // Emit user message
       const userMessageId = TEST_MESSAGE_IDS.USER_1
-      controller.emit(addOffsets(getMessageRows(testData, userMessageId), 0))
+      controller.emit(getMessageRows(testData, userMessageId))
       await flushPromises()
 
       expect(messagesCollection.size).toBe(1)
 
       // Emit all assistant response chunks at once
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
       controller.emit(assistantRows)
       await flushPromises()
 
@@ -139,12 +141,12 @@ describe('messages collection', () => {
     it('should update assistant message content as chunks stream in', async () => {
       // First emit user message
       const userMessageId = TEST_MESSAGE_IDS.USER_1
-      controller.emit(addOffsets(getMessageRows(testData, userMessageId), 0))
+      controller.emit(getMessageRows(testData, userMessageId))
       await flushPromises()
 
       // Get assistant chunks in order
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       // Emit first chunk (empty content initialization)
       controller.emit([assistantRows[0]])
@@ -178,12 +180,12 @@ describe('messages collection', () => {
 
     it('should track correct offsets for assistant message', async () => {
       // Emit user message first
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       // Emit assistant message
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
       controller.emit(assistantRows)
       await flushPromises()
 
@@ -200,7 +202,7 @@ describe('messages collection', () => {
   describe('full conversation flow', () => {
     it('should handle user -> assistant -> user -> assistant correctly', async () => {
       // Emit all test data at once (simulates catching up on reconnect)
-      controller.emit(addOffsets(testData, 0))
+      controller.emit(streamRowsToChunkRows(testData))
       await flushPromises()
 
       // Should have 4 messages
@@ -234,7 +236,7 @@ describe('messages collection', () => {
 
     it('should order messages by startedAt timestamp', async () => {
       // Emit all test data
-      controller.emit(addOffsets(testData, 0))
+      controller.emit(streamRowsToChunkRows(testData))
       await flushPromises()
 
       // Get all messages and verify order
@@ -258,7 +260,7 @@ describe('messages collection', () => {
       const { changes, unsubscribe } = collectChanges(messagesCollection)
 
       // Emit user message
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       expect(changes.length).toBeGreaterThan(0)
@@ -269,13 +271,13 @@ describe('messages collection', () => {
 
     it('should emit change events as assistant message chunks stream in', async () => {
       // Emit user message first
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       const { changes, unsubscribe } = collectChanges(messagesCollection)
 
       // Emit assistant message chunks one by one
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
       for (const row of assistantRows) {
         controller.emit([row])
         await flushPromises()
@@ -296,7 +298,7 @@ describe('messages collection', () => {
   describe('collectedMessages (intermediate stage)', () => {
     it('should group rows by messageId', async () => {
       // Emit all data
-      controller.emit(addOffsets(testData, 0))
+      controller.emit(streamRowsToChunkRows(testData))
       await flushPromises()
 
       // Should have 4 groups (one per message)
@@ -313,7 +315,7 @@ describe('messages collection', () => {
     })
 
     it('should have startedAt set to earliest timestamp', async () => {
-      controller.emit(addOffsets(testData, 0))
+      controller.emit(streamRowsToChunkRows(testData))
       await flushPromises()
 
       const collected = collectedMessagesCollection.get(TEST_MESSAGE_IDS.ASSISTANT_1)
@@ -353,7 +355,7 @@ describe('messages collection', () => {
     // because messages is a derived collection from a live query pipeline.
     // Inserting directly into a derived collection causes TanStack DB reconciliation
     // bugs where synced data becomes invisible while the optimistic mutation is pending.
-    function createTestMessageAction(stream: Collection<StreamRowWithOffset>) {
+    function createTestMessageAction(stream: Collection<ChunkRow>) {
       let optimisticSeq = 0
       let pendingResolvers: Array<() => void> = []
 
@@ -368,13 +370,13 @@ describe('messages collection', () => {
 
           const createdAt = new Date()
 
-          // Insert into stream collection with user-message format
-          // This flows through the live query pipeline: stream → collectedMessages → messages
+          // Insert into chunks collection with user-message format
+          // This flows through the live query pipeline: chunks → collectedMessages → messages
           stream.insert({
-            sessionId: 'test-session',
+            id: `${messageId}:0`, // Primary key: messageId:seq
             messageId,
             actorId: 'test-user',
-            actorType: 'user',
+            role, // Now using 'role' instead of 'actorType'
             chunk: JSON.stringify({
               type: 'user-message',
               message: {
@@ -386,11 +388,10 @@ describe('messages collection', () => {
             }),
             createdAt: createdAt.toISOString(),
             seq: 0,
-            offset: optimisticOffset,
           })
         },
         mutationFn: async () => {
-          // In production, this waits for waitForKey (until synced data arrives)
+          // In production, this waits for db.utils.awaitTxId (until synced data arrives)
           // Here we wait until the test explicitly resolves it
           await new Promise<void>((resolve) => {
             pendingResolvers.push(resolve)
@@ -412,12 +413,12 @@ describe('messages collection', () => {
       // Get test data for user and assistant messages
       const userMessageId = TEST_MESSAGE_IDS.USER_1
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const userRows = addOffsets(getMessageRows(testData, userMessageId), 0)
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const userRows = getMessageRows(testData, userMessageId)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       // Create optimistic action (mimics production client.ts)
-      // Pass streamCollection - optimistic inserts go into the source collection
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      // Pass chunksCollection - optimistic inserts go into the source collection
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Step 1: Insert OPTIMISTIC user message via optimistic action
       // This mimics what createMessageAction() does in client.ts:382
@@ -439,7 +440,7 @@ describe('messages collection', () => {
       controller.emit(userRows)
       await flushPromises()
 
-      // Now resolve the mutation (simulating waitForKey completing)
+      // Now resolve the mutation (simulating awaitTxId completing)
       resolvePending()
       await flushPromises()
 
@@ -473,7 +474,7 @@ describe('messages collection', () => {
       const assistant2Id = TEST_MESSAGE_IDS.ASSISTANT_2
 
       // Create optimistic action
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Insert first optimistic user message
       sendMessage({
@@ -485,7 +486,7 @@ describe('messages collection', () => {
       expect(messagesCollection.size).toBe(1)
 
       // Sync all data at once (user1, assistant1, user2, assistant2)
-      controller.emit(addOffsets(testData, 0))
+      controller.emit(streamRowsToChunkRows(testData))
       await flushPromises()
 
       // Resolve the pending mutation
@@ -507,11 +508,11 @@ describe('messages collection', () => {
       // assistant response streams in chunk by chunk
       const userMessageId = TEST_MESSAGE_IDS.USER_1
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const userRows = addOffsets(getMessageRows(testData, userMessageId), 0)
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const userRows = getMessageRows(testData, userMessageId)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       // Create optimistic action
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Step 1: Insert optimistic user message
       sendMessage({
@@ -526,7 +527,7 @@ describe('messages collection', () => {
       controller.emit(userRows)
       await flushPromises()
 
-      // Resolve mutation (simulating waitForKey success)
+      // Resolve mutation (simulating awaitTxId success)
       resolvePending()
       await flushPromises()
       expect(messagesCollection.size).toBe(1)
@@ -560,11 +561,11 @@ describe('messages collection', () => {
       // The bug report shows "changes: 1" when it should be 2
       const userMessageId = TEST_MESSAGE_IDS.USER_1
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const userRows = addOffsets(getMessageRows(testData, userMessageId), 0)
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const userRows = getMessageRows(testData, userMessageId)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       // Create optimistic action
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Subscribe to changes (like React does)
       const { changes, unsubscribe } = collectChanges(messagesCollection)
@@ -613,15 +614,15 @@ describe('messages collection', () => {
       // Test with markReady to mimic production behavior more closely
       const userMessageId = TEST_MESSAGE_IDS.USER_1
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const userRows = addOffsets(getMessageRows(testData, userMessageId), 0)
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const userRows = getMessageRows(testData, userMessageId)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       // Mark source collection as ready (happens when Electric sync establishes)
       controller.markReady()
       await flushPromises()
 
       // Create optimistic action
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Subscribe to changes
       const { changes, unsubscribe } = collectChanges(messagesCollection)
@@ -660,14 +661,14 @@ describe('messages collection', () => {
       // - This might trigger the bug where assistant message is lost
       const userMessageId = TEST_MESSAGE_IDS.USER_1
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const userRows = addOffsets(getMessageRows(testData, userMessageId), 0)
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const userRows = getMessageRows(testData, userMessageId)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       controller.markReady()
       await flushPromises()
 
       // Create optimistic action
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Subscribe to changes
       const { changes, unsubscribe } = collectChanges(messagesCollection)
@@ -702,18 +703,18 @@ describe('messages collection', () => {
       // This tests the scenario where:
       // - Optimistic user message is pending (mutation not resolved yet)
       // - Assistant message starts streaming in
-      // - In production, waitForKey resolves the mutation as soon as the synced user
-      //   message appears in the messages collection, so this simulates that pattern
+      // - In production, awaitTxId resolves the mutation as soon as the txid from
+      //   the synced user message is seen in the stream, so this simulates that pattern
       const userMessageId = TEST_MESSAGE_IDS.USER_1
       const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const userRows = addOffsets(getMessageRows(testData, userMessageId), 0)
-      const assistantRows = addOffsets(getMessageRows(testData, assistantMessageId), 100)
+      const userRows = getMessageRows(testData, userMessageId)
+      const assistantRows = getMessageRows(testData, assistantMessageId)
 
       controller.markReady()
       await flushPromises()
 
       // Create optimistic action
-      const { action: sendMessage, resolvePending } = createTestMessageAction(streamCollection)
+      const { action: sendMessage, resolvePending } = createTestMessageAction(chunksCollection)
 
       // Subscribe to changes
       const { changes, unsubscribe } = collectChanges(messagesCollection)
@@ -735,13 +736,13 @@ describe('messages collection', () => {
       expect(messagesCollection.size).toBe(1)
       expect(messagesCollection.has(userMessageId)).toBe(true)
 
-      // Step 3: In production, waitForKey would resolve the mutation as soon as
-      // the synced user message is detected. Simulate this by resolving now.
+      // Step 3: In production, awaitTxId would resolve the mutation as soon as
+      // the txid is seen in the synced stream. Simulate this by resolving now.
       resolvePending()
       await flushPromises()
 
       // Step 4: Start streaming assistant AFTER mutation is resolved
-      // This is the realistic scenario - waitForKey resolves quickly
+      // This is the realistic scenario - awaitTxId resolves quickly
       for (let i = 0; i < Math.min(3, assistantRows.length); i++) {
         controller.emit([assistantRows[i]])
         await flushPromises()
@@ -775,7 +776,7 @@ describe('messages collection', () => {
     })
 
     it('should handle duplicate emissions gracefully', async () => {
-      const userMessageRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0)
+      const userMessageRows = getMessageRows(testData, TEST_MESSAGE_IDS.USER_1)
 
       // Emit same data twice
       controller.emit(userMessageRows)
@@ -789,11 +790,11 @@ describe('messages collection', () => {
 
     it('should handle out-of-order chunk delivery', async () => {
       // Emit user message
-      controller.emit(addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1), 0))
+      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
       await flushPromises()
 
       // Get assistant rows and shuffle them
-      const assistantRows = addOffsets(getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1), 100)
+      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
 
       // Emit in reverse order (simulating out-of-order delivery)
       const reversed = [...assistantRows].reverse()
