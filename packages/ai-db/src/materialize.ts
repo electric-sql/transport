@@ -526,3 +526,37 @@ export function isUserMessage(row: MessageRow): boolean {
 export function isAssistantMessage(row: MessageRow): boolean {
   return row.role === 'assistant'
 }
+
+// ============================================================================
+// UIMessage Conversion
+// ============================================================================
+
+/**
+ * Convert a MessageRow to a TanStack AI UIMessage.
+ *
+ * This is a pure transformation function that maps the internal MessageRow
+ * representation to the public UIMessage interface expected by TanStack AI.
+ *
+ * @param row - MessageRow from the messages collection
+ * @returns UIMessage compatible with TanStack AI
+ *
+ * @example
+ * ```typescript
+ * import { messageRowToUIMessage } from '@electric-sql/ai-db'
+ * import { useLiveQuery } from '@tanstack/react-db'
+ *
+ * function Chat({ messagesCollection }) {
+ *   const { data: messageRows } = useLiveQuery(messagesCollection)
+ *   const messages = messageRows?.map(messageRowToUIMessage) ?? []
+ *   // messages is now UIMessage[] compatible with TanStack AI
+ * }
+ * ```
+ */
+export function messageRowToUIMessage(row: MessageRow): import('@tanstack/ai').UIMessage {
+  return {
+    id: row.id,
+    role: row.role as 'user' | 'assistant',
+    parts: row.parts,
+    createdAt: row.createdAt,
+  }
+}

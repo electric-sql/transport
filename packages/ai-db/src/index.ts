@@ -183,4 +183,5 @@ export {
   extractTextContent,
   isUserMessage,
   isAssistantMessage,
+  messageRowToUIMessage,
 } from './materialize'

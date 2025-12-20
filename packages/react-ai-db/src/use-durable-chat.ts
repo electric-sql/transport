@@ -2,17 +2,28 @@
  * useDurableChat - React hook for durable chat.
  *
  * Provides TanStack AI-compatible API backed by Durable Streams
- * with automatic React integration.
+ * with automatic React integration via TanStack DB's useLiveQuery.
+ *
+ * This hook is client-only and will return empty/default values during SSR.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { DurableChatClient } from '@electric-sql/ai-db'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useLiveQuery } from '@tanstack/react-db'
+import { DurableChatClient, messageRowToUIMessage } from '@electric-sql/ai-db'
 import type { DurableChatClientOptions } from '@electric-sql/ai-db'
 import type { UIMessage, AnyClientTool } from '@tanstack/ai'
 import type { UseDurableChatOptions, UseDurableChatReturn } from './types'
 
 /**
+ * Detect if we're running on the server (SSR).
+ */
+const isServer = typeof window === 'undefined'
+
+/**
  * React hook for durable chat with TanStack AI-compatible API.
+ *
+ * Uses TanStack DB's useLiveQuery for reactive data binding, providing
+ * automatic updates when underlying collection data changes.
  *
  * The client and collections are always available synchronously.
  * Connection state is managed separately via connectionStatus.
@@ -25,8 +36,11 @@ import type { UseDurableChatOptions, UseDurableChatReturn } from './types'
  *     proxyUrl: 'http://localhost:4000',
  *   })
  *
- *   // collections is always defined - use directly with useLiveQuery
- *   const chunks = useLiveQuery(q => q.from({ row: collections.chunks }), [collections.chunks])
+ *   // collections is always defined - use directly with useLiveQuery for custom queries
+ *   const toolCalls = useLiveQuery(q =>
+ *     q.from({ tc: collections.toolCalls })
+ *      .where(({ tc }) => eq(tc.state, 'pending'))
+ *   )
  *
  *   return (
  *     <div>
@@ -42,15 +56,12 @@ export function useDurableChat<
 >(options: UseDurableChatOptions<TTools>): UseDurableChatReturn<TTools> {
   const { autoConnect = true, client: providedClient, ...clientOptions } = options
 
-  // Reactive state - must be declared first (before client creation uses them)
-  const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? [])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | undefined>()
-  const [connectionStatus, setConnectionStatus] = useState<
-    'disconnected' | 'connecting' | 'connected' | 'error'
-  >('disconnected')
+  // ═══════════════════════════════════════════════════════════════════════
+  // Client Creation (synchronous - always available immediately)
+  // ═══════════════════════════════════════════════════════════════════════
 
   // Error handler ref - allows client's onError to call setError
+  const [error, setError] = useState<Error | undefined>()
   const onErrorRef = useRef<(err: Error) => void>(() => {})
   onErrorRef.current = (err) => {
     setError(err)
@@ -83,56 +94,60 @@ export function useDurableChat<
 
   const client = clientRef.current.client
 
-  // Side effects: connect, subscribe, cleanup
+  // ═══════════════════════════════════════════════════════════════════════
+  // Reactive Data via useLiveQuery
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Subscribe to messages collection - automatically updates when data changes
+  // Using callback form for proper type inference with pre-created collections
+  const { data: messageRows } = useLiveQuery(() => client.collections.messages)
+
+  // Subscribe to active generations - for isLoading state
+  const { data: activeGenerations } = useLiveQuery(() => client.collections.activeGenerations)
+
+  // Subscribe to session metadata - for connection status
+  const { data: sessionMetaRows } = useLiveQuery(() => client.collections.sessionMeta)
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Derived State
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // Transform MessageRow[] to UIMessage[]
+  const messages = useMemo(
+    () => (messageRows ?? []).map(messageRowToUIMessage),
+    [messageRows]
+  )
+
+  // Derive isLoading from activeGenerations collection
+  const isLoading = (activeGenerations?.length ?? 0) > 0
+
+  // Derive connectionStatus from sessionMeta collection
+  const connectionStatus = sessionMetaRows?.[0]?.connectionStatus ?? 'disconnected'
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Connection Lifecycle
+  // ═══════════════════════════════════════════════════════════════════════
+
   useEffect(() => {
-    const unsubscribes: Array<{ unsubscribe: () => void }> = []
-
-    // Subscribe to collection changes
-    const collections = client.collections
-    unsubscribes.push(
-      collections.activeGenerations.subscribeChanges(() => {
-        setIsLoading(client.isLoading)
-      }),
-      collections.messages.subscribeChanges(() => {
-        setMessages(client.messages as UIMessage[])
-      }),
-      collections.sessionMeta.subscribeChanges(() => {
-        setConnectionStatus(client.connectionStatus)
-      })
-    )
-
-    // Sync initial state
-    setMessages(client.messages as UIMessage[])
-    setIsLoading(client.isLoading)
-    setConnectionStatus(client.connectionStatus)
-
     // Auto-connect if enabled and not already connected
     if (autoConnect && client.connectionStatus === 'disconnected') {
-      setConnectionStatus('connecting')
-      client
-        .connect()
-        .then(() => {
-          setConnectionStatus('connected')
-          setMessages(client.messages as UIMessage[])
-        })
-        .catch((err) => {
-          setConnectionStatus('error')
-          setError(err)
-        })
+      client.connect().catch((err) => {
+        setError(err instanceof Error ? err : new Error(String(err)))
+      })
     }
 
-    // Cleanup: unsubscribe (disposal happens on key change or unmount via ref logic)
+    // Cleanup: dispose client on unmount (only if not provided externally)
     return () => {
-      unsubscribes.forEach((u) => u.unsubscribe())
-      // Only dispose if this is not a provided client
       if (!providedClient) {
         client.dispose()
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, autoConnect])
+  }, [client, autoConnect, providedClient])
 
-  // Callbacks - client is always defined, no null checks needed
+  // ═══════════════════════════════════════════════════════════════════════
+  // Action Callbacks
+  // ═══════════════════════════════════════════════════════════════════════
+
   const sendMessage = useCallback(async (content: string) => {
     try {
       await client.sendMessage(content)
@@ -169,7 +184,6 @@ export function useDurableChat<
 
   const clear = useCallback(() => {
     client.clear()
-    setMessages([])
   }, [client])
 
   const addToolResult = useCallback(
@@ -205,13 +219,9 @@ export function useDurableChat<
   }, [client])
 
   const connect = useCallback(async () => {
-    setConnectionStatus('connecting')
     try {
       await client.connect()
-      setConnectionStatus('connected')
-      setMessages(client.messages as UIMessage[])
     } catch (err) {
-      setConnectionStatus('error')
       setError(err instanceof Error ? err : new Error(String(err)))
       throw err
     }
@@ -219,7 +229,6 @@ export function useDurableChat<
 
   const disconnect = useCallback(() => {
     client.disconnect()
-    setConnectionStatus('disconnected')
   }, [client])
 
   const pause = useCallback(() => {
@@ -229,6 +238,10 @@ export function useDurableChat<
   const resume = useCallback(async () => {
     await client.resume()
   }, [client])
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Return Value
+  // ═══════════════════════════════════════════════════════════════════════
 
   return {
     // TanStack AI useChat compatible

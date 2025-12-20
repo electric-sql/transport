@@ -39,7 +39,7 @@ import {
   updateConnectionStatus,
   updateSyncProgress,
 } from './collections'
-import { extractTextContent } from './materialize'
+import { extractTextContent, messageRowToUIMessage } from './materialize'
 
 /**
  * Unified input for all message optimistic actions.
@@ -258,10 +258,7 @@ export class DurableChatClient<
    * Messages are accessed directly from the materialized collection.
    */
   get messages(): UIMessage[] {
-    // Convert MessageRow to UIMessage
-    return [...this._collections.messages.values()].map((row) =>
-      this.messageRowToUIMessage(row)
-    )
+    return [...this._collections.messages.values()].map(messageRowToUIMessage)
   }
 
   /**
@@ -812,18 +809,6 @@ export class DurableChatClient<
   // ═══════════════════════════════════════════════════════════════════════
   // Private Helpers
   // ═══════════════════════════════════════════════════════════════════════
-
-  /**
-   * Convert MessageRow to UIMessage.
-   */
-  private messageRowToUIMessage(row: MessageRow): UIMessage {
-    return {
-      id: row.id,
-      role: row.role as 'user' | 'assistant',
-      parts: row.parts,
-      createdAt: row.createdAt,
-    }
-  }
 
   /**
    * Update session metadata.
