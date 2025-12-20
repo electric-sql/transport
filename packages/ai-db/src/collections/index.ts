@@ -1,42 +1,23 @@
 /**
  * Collection exports for @electric-sql/ai-db
  *
- * All collections follow the two-stage pipeline pattern:
- * 1. Aggregate stage: groupBy + collect to gather rows
- * 2. Materialize stage: fn.select to transform into final types
+ * Pipeline architecture:
+ * - chunks → (subquery) → messages (root materialized collection)
+ * - Derived collections filter messages via .fn.where() on parts
  *
- * Collections contain fully materialized objects - no helper functions needed.
+ * All derived collections return MessageRow[], preserving full message context.
+ * Consumers filter message.parts to access specific part types (ToolCallPart, etc.).
  */
 
-// Messages collection (two-stage pipeline)
+// Messages collection (root) and derived collections
 export {
-  createCollectedMessagesCollection,
   createMessagesCollection,
-  createMessagesPipeline,
-  type CollectedMessageRows,
-  type CollectedMessagesCollectionOptions,
-  type MessagesCollectionOptions,
-  type MessagesPipelineOptions,
-  type MessagesPipelineResult,
-} from './messages'
-
-// Tool calls collection (derived from collectedMessages)
-export {
   createToolCallsCollection,
-  type ToolCallsCollectionOptions,
-} from './tool-calls'
-
-// Tool results collection (derived from collectedMessages)
-export {
+  createPendingApprovalsCollection,
   createToolResultsCollection,
-  type ToolResultsCollectionOptions,
-} from './tool-results'
-
-// Approvals collection (derived from collectedMessages)
-export {
-  createApprovalsCollection,
-  type ApprovalsCollectionOptions,
-} from './approvals'
+  type MessagesCollectionOptions,
+  type DerivedMessagesCollectionOptions,
+} from './messages'
 
 // Active generations collection (derived from messages)
 export {
@@ -44,7 +25,7 @@ export {
   type ActiveGenerationsCollectionOptions,
 } from './active-generations'
 
-// Session metadata collection (local state - not derived)
+// Session metadata collection (local state)
 export {
   createSessionMetaCollectionOptions,
   createInitialSessionMeta,
@@ -53,7 +34,7 @@ export {
   type SessionMetaCollectionOptions,
 } from './session-meta'
 
-// Session statistics collection (two-stage pipeline)
+// Session statistics collection (aggregated from chunks)
 export {
   createSessionStatsCollection,
   computeSessionStats,

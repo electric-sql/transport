@@ -54,7 +54,7 @@ export const chunkValueSchema = z.object({
   actorId: z.string(),
   /** Message role - aligns with TanStack AI UIMessage.role */
   role: z.enum(['user', 'assistant', 'system']),
-  /** JSON-encoded chunk content - could be UserMessageChunk or StreamChunk */
+  /** JSON-encoded chunk content - could be WholeMessageChunk or StreamChunk */
   chunk: z.string(),
   /** Sequence number within message - monotonically increasing per messageId */
   seq: z.number(),

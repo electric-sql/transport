@@ -1,10 +1,13 @@
 /**
- * Messages collection - two-stage derived pipeline.
+ * Messages collection - core live query pipeline.
  *
- * Stage 1: collectedMessages - groups chunk rows by messageId using collect()
- * Stage 2: messages - materializes MessageRow objects using fn.select()
+ * Architecture:
+ * - chunks → (subquery: groupBy + collect) → messages
+ * - Derived collections use .fn.where() to filter by message parts
  *
- * This follows the pattern: aggregate first → materialize second
+ * The subquery inlines the chunk aggregation, eliminating the need for
+ * a separate intermediate collection. Derived collections are lazy -
+ * filtering overhead only incurred if the collection is accessed.
  *
  * CRITICAL: Materialization happens INSIDE fn.select(). No imperative code
  * outside this pattern.
@@ -17,202 +20,205 @@ import {
   minStr,
 } from '@tanstack/db'
 import type { Collection } from '@tanstack/db'
+import type { ToolCallPart } from '@tanstack/ai'
 import type { ChunkRow } from '../schema'
 import type { MessageRow } from '../types'
 import { materializeMessage } from '../materialize'
 
 // ============================================================================
-// Stage 1: Collected Messages (intermediate)
-// ============================================================================
-
-/**
- * Intermediate type - collected rows grouped by messageId.
- * This is the output of Stage 1 and input to Stage 2.
- */
-export interface CollectedMessageRows {
-  messageId: string
-  rows: ChunkRow[]
-  /**
-   * The earliest createdAt timestamp (ISO 8601 string) among collected rows.
-   * Used for ordering messages chronologically.
-   * ISO 8601 strings sort lexicographically correctly.
-   */
-  startedAt: string | null | undefined
-  /**
-   * Number of rows in this group.
-   * Used as a discriminator to force change detection when new rows are added.
-   * Without this, TanStack DB might not detect that the rows array has changed
-   * since the messageId key and startedAt remain the same.
-   */
-  rowCount: number
-}
-
-/**
- * Options for creating a collected messages collection.
- */
-export interface CollectedMessagesCollectionOptions {
-  /** Session identifier */
-  sessionId: string
-  /** Chunks collection from stream-db */
-  chunksCollection: Collection<ChunkRow>
-}
-
-/**
- * Creates the Stage 1 collection: groups chunk rows by messageId.
- *
- * This is an intermediate collection - consumers should use the
- * messages collection (Stage 2) which materializes the rows.
- */
-export function createCollectedMessagesCollection(
-  options: CollectedMessagesCollectionOptions
-): Collection<CollectedMessageRows> {
-  const { chunksCollection } = options
-
-  // Use config object form with startSync: true to ensure the collection
-  // starts syncing immediately upon creation, providing demand for upstream data
-  const collection = createLiveQueryCollection({
-    query: (q) =>
-      q
-        .from({ chunk: chunksCollection })
-        .groupBy(({ chunk }) => chunk.messageId)
-        .select(({ chunk }) => ({
-          messageId: chunk.messageId,
-          rows: collect(chunk),
-          // Capture earliest timestamp for message ordering (ISO 8601 strings sort lexicographically)
-          startedAt: minStr(chunk.createdAt),
-          // Count rows as a discriminator to force change detection when new rows are added.
-          // Without this, TanStack DB might not detect that the rows array has changed
-          // since the messageId key and startedAt remain the same.
-          rowCount: count(chunk),
-        })),
-    getKey: (row) => row.messageId,
-    startSync: true,
-  })
-
-  return collection
-}
-
-// ============================================================================
-// Stage 2: Materialized Messages
+// Messages Collection (Root)
 // ============================================================================
 
 /**
  * Options for creating a messages collection.
  */
 export interface MessagesCollectionOptions {
-  /** Session identifier */
-  sessionId: string
-  /** Collected messages collection (Stage 1) */
-  collectedMessagesCollection: Collection<CollectedMessageRows>
-}
-
-/**
- * Creates the Stage 2 collection: materializes MessageRow from collected rows.
- *
- * This is the collection that consumers should use - it contains fully
- * materialized MessageRow objects, not intermediate collected rows.
- *
- * @example
- * ```typescript
- * // First create the intermediate collection
- * const collectedMessages = createCollectedMessagesCollection({
- *   sessionId: 'my-session',
- *   chunksCollection: db.collections.chunks,
- * })
- *
- * // Then create the materialized messages collection
- * const messages = createMessagesCollection({
- *   sessionId: 'my-session',
- *   collectedMessagesCollection: collectedMessages,
- * })
- *
- * // Access messages directly - no helper functions needed
- * for (const message of messages.values()) {
- *   console.log(message.id, message.role, message.parts)
- * }
- * ```
- */
-export function createMessagesCollection(
-  options: MessagesCollectionOptions
-): Collection<MessageRow> {
-  const { collectedMessagesCollection } = options
-
-  // Pass query function to createLiveQueryCollection to let it infer types.
-  // Use config object form to provide explicit getKey - this is required for
-  // optimistic mutations (insert/update/delete) on derived collections.
-  // startSync: true ensures the collection starts syncing immediately.
-  const collection = createLiveQueryCollection({
-    query: (q) =>
-      q
-        .from({ collected: collectedMessagesCollection })
-        .orderBy(({ collected }) => collected.startedAt, 'asc')
-        .fn.select(({ collected }) => materializeMessage(collected.rows)),
-    getKey: (row) => row.id,
-    startSync: true,
-  })
-
-  return collection
-}
-
-// ============================================================================
-// Combined Factory (convenience)
-// ============================================================================
-
-/**
- * Options for creating both stages of the messages pipeline.
- */
-export interface MessagesPipelineOptions {
-  /** Session identifier */
-  sessionId: string
   /** Chunks collection from stream-db */
   chunksCollection: Collection<ChunkRow>
 }
 
 /**
- * Result of creating the messages pipeline.
- */
-export interface MessagesPipelineResult {
-  /** Stage 1: Collected messages (intermediate - usually not needed directly) */
-  collectedMessages: Collection<CollectedMessageRows>
-  /** Stage 2: Materialized messages (use this one) */
-  messages: Collection<MessageRow>
-}
-
-/**
- * Creates the complete messages pipeline (both stages).
+ * Creates the messages collection with inline subquery for chunk aggregation.
  *
- * This is a convenience function that creates both the intermediate
- * collected messages collection and the final materialized messages collection.
+ * This is the root materialized collection in the live query pipeline.
+ * All derived collections (toolCalls, pendingApprovals, etc.) derive from this.
+ *
+ * The subquery groups chunks by messageId and collects them, then the outer
+ * query materializes each group into a MessageRow using TanStack AI's
+ * StreamProcessor.
  *
  * @example
  * ```typescript
- * const { messages } = createMessagesPipeline({
- *   sessionId: 'my-session',
+ * const messages = createMessagesCollection({
  *   chunksCollection: db.collections.chunks,
  * })
  *
  * // Access messages directly
- * const allMessages = messages.toArray()
- * const singleMessage = messages.get('message-id')
+ * for (const message of messages.values()) {
+ *   console.log(message.id, message.role, message.parts)
+ * }
+ *
+ * // Filter tool calls from message parts
+ * const toolCalls = message.parts.filter(p => p.type === 'tool-call')
  * ```
  */
-export function createMessagesPipeline(
-  options: MessagesPipelineOptions
-): MessagesPipelineResult {
-  const { sessionId, chunksCollection } = options
+export function createMessagesCollection(
+  options: MessagesCollectionOptions
+): Collection<MessageRow> {
+  const { chunksCollection } = options
 
-  // Stage 1: Create collected messages collection
-  const collectedMessages = createCollectedMessagesCollection({
-    sessionId,
-    chunksCollection,
+  return createLiveQueryCollection({
+    query: (q) => {
+      // Subquery: group chunks by messageId and collect them
+      const collected = q
+        .from({ chunk: chunksCollection })
+        .groupBy(({ chunk }) => chunk.messageId)
+        .select(({ chunk }) => ({
+          messageId: chunk.messageId,
+          rows: collect(chunk),
+          // Capture earliest timestamp for ordering (ISO 8601 strings sort lexicographically)
+          startedAt: minStr(chunk.createdAt),
+          // Count as discriminator to force change detection when rows are added
+          rowCount: count(chunk),
+        }))
+
+      // Main query: materialize messages from collected chunks
+      return q
+        .from({ collected })
+        .orderBy(({ collected }) => collected.startedAt, 'asc')
+        .fn.select(({ collected }) => materializeMessage(collected.rows))
+    },
+    getKey: (row) => row.id,
   })
-
-  // Stage 2: Create materialized messages collection
-  const messages = createMessagesCollection({
-    sessionId,
-    collectedMessagesCollection: collectedMessages,
-  })
-
-  return { collectedMessages, messages }
 }
 
+// ============================================================================
+// Derived Collections
+// ============================================================================
+
+/**
+ * Options for creating a derived collection from messages.
+ */
+export interface DerivedMessagesCollectionOptions {
+  /** Messages collection to derive from */
+  messagesCollection: Collection<MessageRow>
+}
+
+/**
+ * Creates a collection of messages that contain tool calls.
+ *
+ * Filters messages where at least one part has type 'tool-call'.
+ * The collection is lazy - filtering only runs when accessed.
+ *
+ * @example
+ * ```typescript
+ * const toolCalls = createToolCallsCollection({
+ *   messagesCollection: messages,
+ * })
+ *
+ * for (const message of toolCalls.values()) {
+ *   for (const part of message.parts) {
+ *     if (part.type === 'tool-call') {
+ *       console.log(part.name, part.state, part.arguments)
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export function createToolCallsCollection(
+  options: DerivedMessagesCollectionOptions
+): Collection<MessageRow> {
+  const { messagesCollection } = options
+
+  return createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ message: messagesCollection })
+        .fn.where(({ message }) =>
+          message.parts.some((p): p is ToolCallPart => p.type === 'tool-call')
+        )
+        .orderBy(({ message }) => message.createdAt, 'asc'),
+    getKey: (row) => row.id,
+  })
+}
+
+/**
+ * Creates a collection of messages that have pending approval requests.
+ *
+ * Filters messages where at least one tool call part has:
+ * - approval.needsApproval === true
+ * - approval.approved === undefined (not yet responded)
+ *
+ * @example
+ * ```typescript
+ * const pending = createPendingApprovalsCollection({
+ *   messagesCollection: messages,
+ * })
+ *
+ * for (const message of pending.values()) {
+ *   for (const part of message.parts) {
+ *     if (part.type === 'tool-call' && part.approval?.needsApproval) {
+ *       console.log(`Approval needed for ${part.name}: ${part.approval.id}`)
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export function createPendingApprovalsCollection(
+  options: DerivedMessagesCollectionOptions
+): Collection<MessageRow> {
+  const { messagesCollection } = options
+
+  return createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ message: messagesCollection })
+        .fn.where(({ message }) =>
+          message.parts.some(
+            (p): p is ToolCallPart =>
+              p.type === 'tool-call' &&
+              p.approval?.needsApproval === true &&
+              p.approval.approved === undefined
+          )
+        )
+        .orderBy(({ message }) => message.createdAt, 'asc'),
+    getKey: (row) => row.id,
+  })
+}
+
+/**
+ * Creates a collection of messages that contain tool results.
+ *
+ * Filters messages where at least one part has type 'tool-result'.
+ *
+ * @example
+ * ```typescript
+ * const results = createToolResultsCollection({
+ *   messagesCollection: messages,
+ * })
+ *
+ * for (const message of results.values()) {
+ *   for (const part of message.parts) {
+ *     if (part.type === 'tool-result') {
+ *       console.log(part.toolCallId, part.content)
+ *     }
+ *   }
+ * }
+ * ```
+ */
+export function createToolResultsCollection(
+  options: DerivedMessagesCollectionOptions
+): Collection<MessageRow> {
+  const { messagesCollection } = options
+
+  return createLiveQueryCollection({
+    query: (q) =>
+      q
+        .from({ message: messagesCollection })
+        .fn.where(({ message }) =>
+          message.parts.some((p) => p.type === 'tool-result')
+        )
+        .orderBy(({ message }) => message.createdAt, 'asc'),
+    getKey: (row) => row.id,
+  })
+}

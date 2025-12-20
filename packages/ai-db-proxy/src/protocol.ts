@@ -232,7 +232,7 @@ export class AIDBSessionProtocol {
         actorId,
         role: 'user' as const,
         chunk: JSON.stringify({
-          type: 'user-message',
+          type: 'whole-message',
           message,
         }),
         seq: 0,
