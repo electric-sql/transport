@@ -2,31 +2,124 @@
  * useDurableChat - React hook for durable chat.
  *
  * Provides TanStack AI-compatible API backed by Durable Streams
- * with automatic React integration via TanStack DB's useLiveQuery.
- *
- * This hook is client-only and will return empty/default values during SSR.
  */
-
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useLiveQuery } from '@tanstack/react-db'
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  useSyncExternalStore,
+} from 'react'
 import { DurableChatClient, messageRowToUIMessage } from '@electric-sql/ai-db'
 import type { DurableChatClientOptions } from '@electric-sql/ai-db'
+import type { Collection } from '@tanstack/react-db'
 import type { UIMessage, AnyClientTool } from '@tanstack/ai'
 import type { UseDurableChatOptions, UseDurableChatReturn } from './types'
 
 /**
- * Detect if we're running on the server (SSR).
+ * Extract the item type from a Collection.
+ *
+ * TanStack DB's Collection has 5 type parameters:
+ * `Collection<T, TKey, TUtils, TSchema, TInsertInput>`
+ *
+ * This helper extracts `T` (the item type) from any Collection variant.
  */
-const isServer = typeof window === 'undefined'
+type CollectionItem<C> = C extends Collection<infer T, any, any, any, any>
+  ? T
+  : never
+
+/**
+ * SSR-safe hook for subscribing to TanStack DB collection data.
+ * This is a workaround to useLiveQuery not yet supporting SSR
+ * as per https://github.com/TanStack/db/pull/709
+ */
+function useCollectionData<C extends Collection<any, any, any, any, any>>(
+  collection: C
+): CollectionItem<C>[] {
+  type T = CollectionItem<C>
+
+  // Track version to know when to create a new snapshot.
+  // Incremented by subscription callback when collection changes.
+  const versionRef = useRef(0)
+
+  // Cache the last snapshot to maintain stable reference.
+  // useSyncExternalStore requires getSnapshot to return the same reference
+  // when data hasn't changed, otherwise it triggers infinite re-renders.
+  const snapshotRef = useRef<{ version: number; data: T[] }>({
+    version: -1, // Force initial snapshot creation
+    data: [],
+  })
+
+  // Subscribe callback - increments version to signal data changed.
+  // Stored in ref to maintain stable reference for useSyncExternalStore.
+  const subscribeRef = useRef((onStoreChange: () => void): (() => void) => {
+    const subscription = collection.subscribeChanges(() => {
+      versionRef.current++
+      onStoreChange()
+    })
+    return () => subscription.unsubscribe()
+  })
+
+  // Update subscribe ref when collection changes
+  subscribeRef.current = (onStoreChange: () => void): (() => void) => {
+    const subscription = collection.subscribeChanges(() => {
+      versionRef.current++
+      onStoreChange()
+    })
+    return () => subscription.unsubscribe()
+  }
+
+  // Snapshot callback - returns cached data unless version changed.
+  // Stored in ref to maintain stable reference for useSyncExternalStore.
+  const getSnapshotRef = useRef((): T[] => {
+    const currentVersion = versionRef.current
+    const cached = snapshotRef.current
+
+    // Return cached snapshot if version hasn't changed
+    if (cached.version === currentVersion) {
+      return cached.data
+    }
+
+    // Version changed - create new snapshot and cache it
+    const data = [...collection.values()] as T[]
+    snapshotRef.current = { version: currentVersion, data }
+    return data
+  })
+
+  // Update getSnapshot ref when collection changes
+  getSnapshotRef.current = (): T[] => {
+    const currentVersion = versionRef.current
+    const cached = snapshotRef.current
+
+    if (cached.version === currentVersion) {
+      return cached.data
+    }
+
+    const data = [...collection.values()] as T[]
+    snapshotRef.current = { version: currentVersion, data }
+    return data
+  }
+
+  // Pass the same function for both getSnapshot and getServerSnapshot.
+  // This ensures server and client render the same initial state (empty array),
+  // preventing hydration mismatches while enabling proper SSR.
+  return useSyncExternalStore(
+    subscribeRef.current,
+    getSnapshotRef.current,
+    getSnapshotRef.current
+  )
+}
 
 /**
  * React hook for durable chat with TanStack AI-compatible API.
  *
- * Uses TanStack DB's useLiveQuery for reactive data binding, providing
- * automatic updates when underlying collection data changes.
+ * Provides reactive data binding with automatic updates when underlying
+ * collection data changes. Supports SSR through proper `useSyncExternalStore`
+ * integration.
  *
  * The client and collections are always available synchronously.
- * Connection state is managed separately via connectionStatus.
+ * Connection state is managed separately via `connectionStatus`.
  *
  * @example Basic usage
  * ```typescript
@@ -36,12 +129,6 @@ const isServer = typeof window === 'undefined'
  *     proxyUrl: 'http://localhost:4000',
  *   })
  *
- *   // collections is always defined - use directly with useLiveQuery for custom queries
- *   const toolCalls = useLiveQuery(q =>
- *     q.from({ tc: collections.toolCalls })
- *      .where(({ tc }) => eq(tc.state, 'pending'))
- *   )
- *
  *   return (
  *     <div>
  *       {messages.map(m => <Message key={m.id} message={m} />)}
@@ -50,15 +137,26 @@ const isServer = typeof window === 'undefined'
  *   )
  * }
  * ```
+ *
+ * @example Custom queries with useLiveQuery
+ * ```typescript
+ * import { useLiveQuery, eq } from '@tanstack/react-db'
+ *
+ * function Chat() {
+ *   const { collections } = useDurableChat({ ... })
+ *
+ *   // Use collections with useLiveQuery for custom queries
+ *   const pendingToolCalls = useLiveQuery(q =>
+ *     q.from({ tc: collections.toolCalls })
+ *      .where(({ tc }) => eq(tc.state, 'pending'))
+ *   )
+ * }
+ * ```
  */
 export function useDurableChat<
   TTools extends ReadonlyArray<AnyClientTool> = AnyClientTool[],
 >(options: UseDurableChatOptions<TTools>): UseDurableChatReturn<TTools> {
   const { autoConnect = true, client: providedClient, ...clientOptions } = options
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Client Creation (synchronous - always available immediately)
-  // ═══════════════════════════════════════════════════════════════════════
 
   // Error handler ref - allows client's onError to call setError
   const [error, setError] = useState<Error | undefined>()
@@ -69,20 +167,16 @@ export function useDurableChat<
   }
 
   // Create client synchronously - always available immediately
-  // Use ref to persist across renders and track when we need a new client
   const clientRef = useRef<{ client: DurableChatClient<TTools>; key: string } | null>(null)
   const key = `${clientOptions.sessionId}:${clientOptions.proxyUrl}`
 
   // Create or recreate client when key changes
   if (providedClient) {
-    // Use provided client (for testing)
     if (!clientRef.current || clientRef.current.client !== providedClient) {
       clientRef.current = { client: providedClient, key: 'provided' }
     }
   } else if (!clientRef.current || clientRef.current.key !== key) {
-    // Dispose old client if exists
     clientRef.current?.client.dispose()
-    // Create new client synchronously
     clientRef.current = {
       client: new DurableChatClient<TTools>({
         ...clientOptions,
@@ -94,49 +188,26 @@ export function useDurableChat<
 
   const client = clientRef.current.client
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // Reactive Data via useLiveQuery
-  // ═══════════════════════════════════════════════════════════════════════
+  const messageRows = useCollectionData(client.collections.messages)
+  const activeGenerations = useCollectionData(client.collections.activeGenerations)
+  const sessionMetaRows = useCollectionData(client.collections.sessionMeta)
 
-  // Subscribe to messages collection - automatically updates when data changes
-  // Using callback form for proper type inference with pre-created collections
-  const { data: messageRows } = useLiveQuery(() => client.collections.messages)
-
-  // Subscribe to active generations - for isLoading state
-  const { data: activeGenerations } = useLiveQuery(() => client.collections.activeGenerations)
-
-  // Subscribe to session metadata - for connection status
-  const { data: sessionMetaRows } = useLiveQuery(() => client.collections.sessionMeta)
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Derived State
-  // ═══════════════════════════════════════════════════════════════════════
-
-  // Transform MessageRow[] to UIMessage[]
   const messages = useMemo(
-    () => (messageRows ?? []).map(messageRowToUIMessage),
+    // Transform MessageRow[] to UIMessage[]
+    () => messageRows.map(messageRowToUIMessage),
     [messageRows]
   )
 
-  // Derive isLoading from activeGenerations collection
-  const isLoading = (activeGenerations?.length ?? 0) > 0
-
-  // Derive connectionStatus from sessionMeta collection
-  const connectionStatus = sessionMetaRows?.[0]?.connectionStatus ?? 'disconnected'
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Connection Lifecycle
-  // ═══════════════════════════════════════════════════════════════════════
+  const isLoading = activeGenerations.length > 0
+  const connectionStatus = sessionMetaRows[0]?.connectionStatus ?? 'disconnected'
 
   useEffect(() => {
-    // Auto-connect if enabled and not already connected
     if (autoConnect && client.connectionStatus === 'disconnected') {
       client.connect().catch((err) => {
         setError(err instanceof Error ? err : new Error(String(err)))
       })
     }
 
-    // Cleanup: dispose client on unmount (only if not provided externally)
     return () => {
       if (!providedClient) {
         client.dispose()
@@ -144,9 +215,7 @@ export function useDurableChat<
     }
   }, [client, autoConnect, providedClient])
 
-  // ═══════════════════════════════════════════════════════════════════════
   // Action Callbacks
-  // ═══════════════════════════════════════════════════════════════════════
 
   const sendMessage = useCallback(async (content: string) => {
     try {
@@ -238,10 +307,6 @@ export function useDurableChat<
   const resume = useCallback(async () => {
     await client.resume()
   }, [client])
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Return Value
-  // ═══════════════════════════════════════════════════════════════════════
 
   return {
     // TanStack AI useChat compatible
