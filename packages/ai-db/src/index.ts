@@ -10,8 +10,11 @@
  * - Multi-agent support with webhook registration
  * - Reactive collections for custom UI needs
  *
- * All derived collections contain fully materialized objects - no helper
- * functions needed. Access data directly from collections.
+ * Architecture:
+ * - chunks → (subquery) → messages (root materialized collection)
+ * - Derived collections filter messages via .fn.where() on parts
+ * - All collections return MessageRow[], preserving full message context
+ * - Consumers filter message.parts to access specific part types
  *
  * @example
  * ```typescript
@@ -28,14 +31,28 @@
  * await client.sendMessage('Hello!')
  * console.log(client.messages)
  *
- * // Access collections directly (no helper functions needed)
+ * // Access collections directly
  * for (const message of client.collections.messages.values()) {
  *   console.log(message.id, message.role, message.parts)
  * }
  *
- * // Filter with standard collection methods
- * const pending = [...client.collections.approvals.values()]
- *   .filter(a => a.status === 'pending')
+ * // Filter tool calls from message parts
+ * for (const message of client.collections.toolCalls.values()) {
+ *   for (const part of message.parts) {
+ *     if (part.type === 'tool-call') {
+ *       console.log(part.name, part.state, part.arguments)
+ *     }
+ *   }
+ * }
+ *
+ * // Check for pending approvals
+ * for (const message of client.collections.pendingApprovals.values()) {
+ *   for (const part of message.parts) {
+ *     if (part.type === 'tool-call' && part.approval?.needsApproval) {
+ *       console.log(`Approval needed: ${part.name}`)
+ *     }
+ *   }
+ * }
  * ```
  *
  * @packageDocumentation
@@ -77,17 +94,15 @@ export type {
   MessageRole,
   MessageRow,
 
+  // Re-exported TanStack AI types for consumer convenience
+  MessagePart,
+  TextPart,
+  ToolCallPart,
+  ToolResultPart,
+  ThinkingPart,
+
   // Active generation types
   ActiveGenerationRow,
-
-  // Tool types
-  ToolCallState,
-  ToolCallRow,
-  ToolResultRow,
-
-  // Approval types
-  ApprovalStatus,
-  ApprovalRow,
 
   // Session types
   ConnectionStatus,
@@ -126,28 +141,18 @@ export {
   type SessionDB,
 } from './collection'
 
+// ============================================================================
+// Collection Factories
+// ============================================================================
+
 export {
-  // Messages collection (two-stage pipeline)
-  createCollectedMessagesCollection,
+  // Messages collection (root) and derived collections
   createMessagesCollection,
-  createMessagesPipeline,
-  type CollectedMessageRows,
-  type CollectedMessagesCollectionOptions,
-  type MessagesCollectionOptions,
-  type MessagesPipelineOptions,
-  type MessagesPipelineResult,
-
-  // Tool calls collection
   createToolCallsCollection,
-  type ToolCallsCollectionOptions,
-
-  // Tool results collection
+  createPendingApprovalsCollection,
   createToolResultsCollection,
-  type ToolResultsCollectionOptions,
-
-  // Approvals collection
-  createApprovalsCollection,
-  type ApprovalsCollectionOptions,
+  type MessagesCollectionOptions,
+  type DerivedMessagesCollectionOptions,
 
   // Active generations collection
   createActiveGenerationsCollection,
@@ -174,12 +179,6 @@ export {
 export {
   materializeMessage,
   parseChunk,
-  extractToolCalls,
-  extractToolResults,
-  extractApprovals,
-  detectActiveGenerations,
-  groupRowsByMessage,
-  materializeAllMessages,
   extractTextContent,
   isUserMessage,
   isAssistantMessage,

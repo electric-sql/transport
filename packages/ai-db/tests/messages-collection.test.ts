@@ -17,11 +17,7 @@ import {
   TEST_MESSAGE_IDS,
   EXPECTED_CONTENT,
 } from './fixtures/test-helpers'
-import {
-  createCollectedMessagesCollection,
-  createMessagesCollection,
-  type CollectedMessageRows,
-} from '../src/collections/messages'
+import { createMessagesCollection } from '../src/collections/messages'
 import type { ChunkRow } from '../src/schema'
 import type { MessageRow } from '../src/types'
 import type { Collection } from '@tanstack/db'
@@ -34,7 +30,6 @@ describe('messages collection', () => {
   // Collections to be set up in beforeEach
   let chunksCollection: Collection<ChunkRow>
   let controller: ReturnType<typeof createMockChunksCollection>['controller']
-  let collectedMessagesCollection: Collection<CollectedMessageRows>
   let messagesCollection: Collection<MessageRow>
 
   beforeEach(() => {
@@ -43,20 +38,13 @@ describe('messages collection', () => {
     chunksCollection = mock.collection
     controller = mock.controller
 
-    // Create the two-stage pipeline
-    collectedMessagesCollection = createCollectedMessagesCollection({
-      sessionId: 'test-session',
+    // Create messages collection with inline subquery
+    messagesCollection = createMessagesCollection({
       chunksCollection,
     })
 
-    messagesCollection = createMessagesCollection({
-      sessionId: 'test-session',
-      collectedMessagesCollection,
-    })
-
-    // Initialize all collections - preload creates demand for syncing
+    // Initialize collections - preload creates demand for syncing
     chunksCollection.preload()
-    collectedMessagesCollection.preload()
     messagesCollection.preload()
     controller.markReady()
   })
@@ -179,21 +167,6 @@ describe('messages collection', () => {
       expect((textPart as { type: 'text'; content: string })?.content).toBe(EXPECTED_CONTENT.ASSISTANT_1)
     })
 
-    it('should track correct offsets for assistant message', async () => {
-      // Emit user message first
-      controller.emit(getMessageRows(testData, TEST_MESSAGE_IDS.USER_1))
-      await flushPromises()
-
-      // Emit assistant message
-      const assistantMessageId = TEST_MESSAGE_IDS.ASSISTANT_1
-      const assistantRows = getMessageRows(testData, assistantMessageId)
-      controller.emit(assistantRows)
-      await flushPromises()
-
-      const assistantMessage = messagesCollection.get(assistantMessageId)
-      expect(assistantMessage?.startOffset).toBe(assistantRows[0].offset)
-      expect(assistantMessage?.endOffset).toBe(assistantRows[assistantRows.length - 1].offset)
-    })
   })
 
   // ==========================================================================
@@ -243,7 +216,7 @@ describe('messages collection', () => {
       // Get all messages and verify order
       const messages = [...messagesCollection.values()]
 
-      // Messages should be ordered by startOffset (chronological)
+      // Messages should be ordered chronologically by createdAt
       // The first message should be the first user message
       expect(messages[0].id).toBe(TEST_MESSAGE_IDS.USER_1)
       expect(messages[1].id).toBe(TEST_MESSAGE_IDS.ASSISTANT_1)
@@ -289,43 +262,6 @@ describe('messages collection', () => {
       expect(assistantChanges.length).toBeGreaterThan(1)
 
       unsubscribe()
-    })
-  })
-
-  // ==========================================================================
-  // Intermediate Collection Tests
-  // ==========================================================================
-
-  describe('collectedMessages (intermediate stage)', () => {
-    it('should group rows by messageId', async () => {
-      // Emit all data
-      controller.emit(streamRowsToChunkRows(testData))
-      await flushPromises()
-
-      // Should have 4 groups (one per message)
-      expect(collectedMessagesCollection.size).toBe(4)
-
-      // Check that user message has 1 row
-      const collected1 = collectedMessagesCollection.get(TEST_MESSAGE_IDS.USER_1)
-      expect(collected1?.rows).toHaveLength(1)
-
-      // Check that first assistant message has all its chunks
-      const assistantRows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
-      const collected2 = collectedMessagesCollection.get(TEST_MESSAGE_IDS.ASSISTANT_1)
-      expect(collected2?.rows).toHaveLength(assistantRows.length)
-    })
-
-    it('should have startedAt set to earliest timestamp', async () => {
-      controller.emit(streamRowsToChunkRows(testData))
-      await flushPromises()
-
-      const collected = collectedMessagesCollection.get(TEST_MESSAGE_IDS.ASSISTANT_1)
-      expect(collected?.startedAt).toBeDefined()
-
-      // startedAt should be the createdAt of the first row
-      const rows = getMessageRows(testData, TEST_MESSAGE_IDS.ASSISTANT_1)
-      const sortedRows = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      expect(collected?.startedAt).toBe(sortedRows[0].createdAt)
     })
   })
 
@@ -770,7 +706,6 @@ describe('messages collection', () => {
       await flushPromises()
 
       expect(messagesCollection.size).toBe(0)
-      expect(collectedMessagesCollection.size).toBe(0)
     })
 
     it('should handle duplicate emissions gracefully', async () => {

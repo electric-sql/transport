@@ -2,9 +2,13 @@
  * Core type definitions for @electric-sql/ai-db
  *
  * Defines the stream protocol types, collection schemas, and API interfaces.
+ *
+ * Design principles:
+ * - Use TanStack AI types directly (MessagePart, ToolCallPart, etc.)
+ * - Single MessageRow type for all materialized messages
+ * - Derived collections filter on message parts, not custom row types
  */
 
-import { z } from 'zod'
 import type {
   StreamChunk,
   UIMessage,
@@ -19,6 +23,15 @@ export type { ChunkRow, ChunkValue, PresenceRow, AgentRow } from './schema'
 
 // Re-export LiveMode from @durable-streams/state
 export type { LiveMode }
+
+// Re-export TanStack AI message part types for consumer convenience
+export type {
+  MessagePart,
+  TextPart,
+  ToolCallPart,
+  ToolResultPart,
+  ThinkingPart,
+} from '@tanstack/ai'
 
 // ============================================================================
 // Stream Protocol Types
@@ -61,16 +74,34 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 /**
  * Materialized message row from stream.
  *
+ * Extends TanStack AI's UIMessage with durable session metadata.
  * Messages are materialized from ChunkRow arrays via the live query pipeline.
- * User messages (single chunk) and assistant messages (multiple streaming chunks)
- * are both represented with this type.
+ *
+ * Message parts use TanStack AI's discriminated union types directly:
+ * - TextPart: { type: 'text', content: string }
+ * - ToolCallPart: { type: 'tool-call', id, name, arguments, state, approval?, output? }
+ * - ToolResultPart: { type: 'tool-result', toolCallId, content, state, error? }
+ * - ThinkingPart: { type: 'thinking', content: string }
+ *
+ * @example
+ * ```typescript
+ * // Filter for tool calls in a message
+ * const toolCalls = message.parts.filter(
+ *   (p): p is ToolCallPart => p.type === 'tool-call'
+ * )
+ *
+ * // Check for pending approvals
+ * const pendingApprovals = toolCalls.filter(
+ *   tc => tc.approval?.needsApproval && tc.approval.approved === undefined
+ * )
+ * ```
  */
 export interface MessageRow {
   /** Message identifier (same as messageId from chunks) */
   id: string
   /** Message role */
   role: MessageRole
-  /** Materialized message parts from parsed chunks */
+  /** Message parts - uses TanStack AI's MessagePart type directly */
   parts: MessagePart[]
   /** Actor identifier who wrote this message */
   actorId: string
@@ -98,92 +129,6 @@ export interface ActiveGenerationRow {
   lastChunkSeq: number
   /** When last chunk was received */
   lastChunkAt: Date
-}
-
-// ============================================================================
-// Tool Call Types
-// ============================================================================
-
-/**
- * Tool call state.
- */
-export type ToolCallState = 'pending' | 'executing' | 'complete'
-
-/**
- * Derived tool call row from stream.
- */
-export interface ToolCallRow {
-  /** Tool call identifier from chunk */
-  id: string
-  /** Message containing this tool call */
-  messageId: string
-  /** Tool name */
-  name: string
-  /** Accumulated JSON string arguments */
-  arguments: string
-  /** Parsed input (when complete) */
-  input: unknown | null
-  /** Tool call state */
-  state: ToolCallState
-  /** Actor identifier */
-  actorId: string
-  /** Tool call creation timestamp */
-  createdAt: Date
-}
-
-// ============================================================================
-// Tool Result Types
-// ============================================================================
-
-/**
- * Derived tool result row from stream.
- */
-export interface ToolResultRow {
-  /** Result identifier */
-  id: string
-  /** Associated tool call identifier */
-  toolCallId: string
-  /** Message containing this result */
-  messageId: string
-  /** Tool output */
-  output: unknown
-  /** Error message if failed */
-  error: string | null
-  /** Actor identifier */
-  actorId: string
-  /** Result creation timestamp */
-  createdAt: Date
-}
-
-// ============================================================================
-// Approval Types
-// ============================================================================
-
-/**
- * Approval status.
- */
-export type ApprovalStatus = 'pending' | 'approved' | 'denied'
-
-/**
- * Derived approval row from stream.
- */
-export interface ApprovalRow {
-  /** Approval identifier from chunk */
-  id: string
-  /** Associated tool call identifier */
-  toolCallId: string
-  /** Message containing this approval */
-  messageId: string
-  /** Approval status */
-  status: ApprovalStatus
-  /** Actor who requested approval */
-  requestedBy: string
-  /** When approval was requested */
-  requestedAt: Date
-  /** Actor who responded to approval */
-  respondedBy: string | null
-  /** When approval was responded to */
-  respondedAt: Date | null
 }
 
 // ============================================================================
@@ -284,12 +229,39 @@ import type { ChunkRow, PresenceRow, AgentRow } from './schema'
 /**
  * All collections exposed by DurableChatClient.
  *
- * All derived collections contain fully materialized objects - no helper
- * functions needed to access the data. This is achieved through a two-stage
- * pipeline: aggregate first (groupBy + collect), then materialize (fn.select).
+ * Architecture:
+ * - `chunks`, `presence`, `agents`: Synced from Durable Stream via stream-db
+ * - `messages`: Root materialized collection (groupBy + collect → materialize)
+ * - `toolCalls`, `pendingApprovals`, `toolResults`: Derived from messages via .fn.where()
+ * - `activeGenerations`: Derived from messages (incomplete messages)
+ * - `sessionMeta`, `sessionStats`: Local/aggregated state
  *
- * The `chunks`, `presence`, and `agents` collections are synced directly from
- * the Durable Stream via stream-db. Other collections are derived from chunks.
+ * Pipeline:
+ * ```
+ * chunks → (subquery) → messages
+ *                          ↓
+ *           .fn.where(parts filtering)
+ *                          ↓
+ *                 toolCalls (lazy)
+ *                 pendingApprovals (lazy)
+ *                 toolResults (lazy)
+ *                 activeGenerations (lazy)
+ * ```
+ *
+ * Derived collections return MessageRow[], preserving full message context.
+ * Consumers filter message.parts to access specific part types.
+ *
+ * @example
+ * ```typescript
+ * // Get messages with pending approvals
+ * for (const message of client.collections.pendingApprovals.values()) {
+ *   for (const part of message.parts) {
+ *     if (part.type === 'tool-call' && part.approval?.needsApproval) {
+ *       console.log(`Approval needed: ${part.name}`)
+ *     }
+ *   }
+ * }
+ * ```
  */
 export interface DurableChatCollections {
   /** Root chunks collection synced from Durable Stream via stream-db */
@@ -298,16 +270,16 @@ export interface DurableChatCollections {
   presence: Collection<PresenceRow>
   /** Agents collection - registered webhook agents (from stream-db) */
   agents: Collection<AgentRow>
-  /** Materialized messages (keyed by messageId) */
+  /** All materialized messages (keyed by messageId) */
   messages: Collection<MessageRow>
-  /** Active generations - messages currently being streamed (keyed by messageId) */
+  /** Messages containing tool calls (keyed by messageId) */
+  toolCalls: Collection<MessageRow>
+  /** Messages with pending approval requests (keyed by messageId) */
+  pendingApprovals: Collection<MessageRow>
+  /** Messages containing tool results (keyed by messageId) */
+  toolResults: Collection<MessageRow>
+  /** Active generations - incomplete messages (keyed by messageId) */
   activeGenerations: Collection<ActiveGenerationRow>
-  /** Materialized tool calls (keyed by toolCallId) */
-  toolCalls: Collection<ToolCallRow>
-  /** Materialized tool results (keyed by resultId) */
-  toolResults: Collection<ToolResultRow>
-  /** Materialized approvals (keyed by approvalId) */
-  approvals: Collection<ApprovalRow>
   /** Session metadata collection (local state) */
   sessionMeta: Collection<SessionMetaRow>
   /** Session statistics (keyed by sessionId) */

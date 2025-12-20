@@ -13,10 +13,7 @@ import {
   flushPromises,
   TEST_MESSAGE_IDS,
 } from './fixtures/test-helpers'
-import {
-  createCollectedMessagesCollection,
-  createMessagesCollection,
-} from '../src/collections/messages'
+import { createMessagesCollection } from '../src/collections/messages'
 import { createActiveGenerationsCollection } from '../src/collections/active-generations'
 import type { ChunkRow } from '../src/schema'
 import type { MessageRow, ActiveGenerationRow } from '../src/types'
@@ -37,25 +34,17 @@ describe('active generations collection', () => {
     chunksCollection = mock.collection
     controller = mock.controller
 
-    // Create the pipeline: chunks -> collectedMessages -> messages -> activeGenerations
-    const collectedMessagesCollection = createCollectedMessagesCollection({
-      sessionId: 'test-session',
+    // Create the pipeline: chunks -> messages -> activeGenerations
+    messagesCollection = createMessagesCollection({
       chunksCollection,
     })
 
-    messagesCollection = createMessagesCollection({
-      sessionId: 'test-session',
-      collectedMessagesCollection,
-    })
-
     activeGenerations = createActiveGenerationsCollection({
-      sessionId: 'test-session',
       messagesCollection,
     })
 
-    // Initialize all collections - preload creates demand for syncing
+    // Initialize collections - preload creates demand for syncing
     chunksCollection.preload()
-    collectedMessagesCollection.preload()
     messagesCollection.preload()
     activeGenerations.preload()
     controller.markReady()

@@ -4,14 +4,13 @@
  * Provides TanStack AI-compatible API backed by Durable Streams
  * with real-time sync and multi-agent support.
  *
- * All derived collections contain fully materialized objects.
- * No helper functions needed to access data.
+ * All derived collections contain fully materialized MessageRow objects.
+ * Consumers filter message.parts to access specific part types (ToolCallPart, etc.).
  */
 
 import { createCollection, createOptimisticAction } from '@tanstack/db'
 import type { Transaction } from '@tanstack/db'
-import type { UIMessage, AnyClientTool } from '@tanstack/ai'
-import type { ChunkRow } from './schema'
+import type { UIMessage, AnyClientTool, ToolCallPart } from '@tanstack/ai'
 import type {
   DurableChatClientOptions,
   MessageRow,
@@ -25,19 +24,17 @@ import type {
   ApprovalResponseInput,
   ActorType,
 } from './types'
-import { createSessionDB, getChunkKey, type SessionDB } from './collection'
+import { createSessionDB, type SessionDB } from './collection'
 import {
-  createCollectedMessagesCollection,
   createMessagesCollection,
   createToolCallsCollection,
+  createPendingApprovalsCollection,
   createToolResultsCollection,
-  createApprovalsCollection,
   createActiveGenerationsCollection,
   createSessionMetaCollectionOptions,
   createSessionStatsCollection,
   createInitialSessionMeta,
   updateConnectionStatus,
-  updateSyncProgress,
 } from './collections'
 import { extractTextContent, messageRowToUIMessage } from './materialize'
 
@@ -109,8 +106,7 @@ export class DurableChatClient<
 
   // Collections are typed via inference from createCollections()
   // Created synchronously in constructor - always available
-  private readonly _collections: ReturnType<DurableChatClient['createCollections']>['collections']
-  private readonly _collectedMessages: ReturnType<DurableChatClient['createCollections']>['collectedMessages']
+  private readonly _collections: ReturnType<DurableChatClient['createCollections']>
 
   private _isConnected = false
   private _isPaused = false
@@ -151,9 +147,7 @@ export class DurableChatClient<
     })
 
     // Create all collections synchronously (always from _db.collections)
-    const { collections, collectedMessages } = this.createCollections()
-    this._collections = collections
-    this._collectedMessages = collectedMessages
+    this._collections = this.createCollections()
 
     // Initialize session metadata
     this._collections.sessionMeta.insert(
@@ -173,8 +167,9 @@ export class DurableChatClient<
   /**
    * Create all derived collections from the chunks collection.
    *
-   * This implements the live query pipeline pattern:
-   * chunks → collectedMessages → messages (and other derived collections)
+   * Pipeline architecture:
+   * - chunks → (subquery) → messages (root materialized collection)
+   * - Derived collections filter messages via .fn.where() on parts
    *
    * CRITICAL: Materialization happens inside fn.select(). No imperative code
    * outside this pattern.
@@ -183,69 +178,53 @@ export class DurableChatClient<
     // Get root collections from stream-db (always available - from real or mock SessionDB)
     const { chunks, presence, agents } = this._db.collections
 
-    // Stage 1: Create collected messages (intermediate - groups by messageId)
-    const collectedMessages = createCollectedMessagesCollection({
-      sessionId: this.sessionId,
+    // Root materialized collection: chunks → messages
+    // Uses inline subquery for chunk aggregation
+    const messages = createMessagesCollection({
       chunksCollection: chunks,
     })
 
-    // Stage 2: Create materialized messages collection
-    const messages = createMessagesCollection({
-      sessionId: this.sessionId,
-      collectedMessagesCollection: collectedMessages,
-    })
-
-    // Derive tool calls from collected messages
+    // Derived collections filter on message parts (lazy evaluation)
     const toolCalls = createToolCallsCollection({
-      sessionId: this.sessionId,
-      collectedMessagesCollection: collectedMessages,
-    })
-
-    // Derive tool results from collected messages
-    const toolResults = createToolResultsCollection({
-      sessionId: this.sessionId,
-      collectedMessagesCollection: collectedMessages,
-    })
-
-    // Derive approvals from collected messages
-    const approvals = createApprovalsCollection({
-      sessionId: this.sessionId,
-      collectedMessagesCollection: collectedMessages,
-    })
-
-    // Derive active generations from messages
-    const activeGenerations = createActiveGenerationsCollection({
-      sessionId: this.sessionId,
       messagesCollection: messages,
     })
 
-    // Create session metadata collection (local state)
+    const pendingApprovals = createPendingApprovalsCollection({
+      messagesCollection: messages,
+    })
+
+    const toolResults = createToolResultsCollection({
+      messagesCollection: messages,
+    })
+
+    const activeGenerations = createActiveGenerationsCollection({
+      messagesCollection: messages,
+    })
+
+    // Session metadata collection (local state)
     const sessionMeta = createCollection(
       createSessionMetaCollectionOptions({
         sessionId: this.sessionId,
       })
     )
 
-    // Create session statistics collection (derived from chunks)
+    // Session statistics collection (aggregated from chunks)
     const sessionStats = createSessionStatsCollection({
       sessionId: this.sessionId,
       chunksCollection: chunks,
     })
 
     return {
-      collections: {
-        chunks,
-        presence,
-        agents,
-        messages,
-        toolCalls,
-        toolResults,
-        approvals,
-        activeGenerations,
-        sessionMeta,
-        sessionStats,
-      },
-      collectedMessages,
+      chunks,
+      presence,
+      agents,
+      messages,
+      toolCalls,
+      pendingApprovals,
+      toolResults,
+      activeGenerations,
+      sessionMeta,
+      sessionStats,
     }
   }
 
@@ -377,42 +356,24 @@ export class DurableChatClient<
    * Create the unified optimistic action for all message types.
    * Handles user, assistant, and system messages with the same pattern.
    *
-   * IMPORTANT: We insert into the chunks collection (not the messages collection)
-   * because messages is a derived collection from a live query pipeline. Inserting
-   * directly into a derived collection causes TanStack DB reconciliation bugs where
-   * synced data becomes invisible while the optimistic mutation is pending.
-   *
-   * By inserting into the chunks collection with the whole-message format, the
-   * optimistic row flows through the normal pipeline: chunks → collectedMessages → messages.
+   * Optimistic updates insert into the messages collection directly.
+   * This ensures the optimistic state propagates to all derived collections
+   * (toolCalls, pendingApprovals, toolResults, activeGenerations).
    */
   private createMessageAction() {
     return createOptimisticAction<MessageActionInput>({
       onMutate: ({ content, messageId, role }) => {
-        // For optimistic inserts, we use seq=0 since user messages are single-chunk.
-        // The key format is `${messageId}:${seq}`.
-        const seq = 0
-        const id = getChunkKey(messageId, seq)
-
         const createdAt = new Date()
 
-        // Insert into chunks collection with whole-message format.
-        // This flows through the live query pipeline: chunks → collectedMessages → messages
-        this._collections.chunks.insert({
-          id,
-          messageId,
-          actorId: this.actorId,
+        // Insert into messages collection directly
+        // This propagates to all derived collections
+        this._collections.messages.insert({
+          id: messageId,
           role,
-          chunk: JSON.stringify({
-            type: 'whole-message',
-            message: {
-              id: messageId,
-              role,
-              parts: [{ type: 'text' as const, content }],
-              createdAt: createdAt.toISOString(),
-            },
-          }),
-          createdAt: createdAt.toISOString(),
-          seq,
+          parts: [{ type: 'text' as const, content }],
+          actorId: this.actorId,
+          isComplete: true,
+          createdAt,
         })
       },
       mutationFn: async ({ content, messageId, role, agent }) => {
@@ -523,21 +484,28 @@ export class DurableChatClient<
   /**
    * Create the optimistic action for adding tool results.
    *
-   * Uses client-generated messageId for predictable tool result IDs,
-   * enabling proper optimistic updates.
+   * Inserts a new message with a ToolResultPart into the messages collection.
+   * Uses client-generated messageId for predictable IDs.
    */
   private createAddToolResultAction() {
     return createOptimisticAction<ClientToolResultInput>({
       onMutate: ({ messageId, toolCallId, output, error }) => {
-        const resultId = `${messageId}:${toolCallId}`
-        this._collections.toolResults.insert({
-          id: resultId,
-          toolCallId,
-          messageId,
-          output,
-          error: error ?? null,
+        const createdAt = new Date()
+
+        // Insert a new message with tool-result part
+        this._collections.messages.insert({
+          id: messageId,
+          role: 'assistant',
+          parts: [{
+            type: 'tool-result' as const,
+            toolCallId,
+            content: typeof output === 'string' ? output : JSON.stringify(output),
+            state: error ? 'error' as const : 'complete' as const,
+            ...(error && { error }),
+          }],
           actorId: this.actorId,
-          createdAt: new Date(),
+          isComplete: true,
+          createdAt,
         })
       },
       mutationFn: async ({ messageId, toolCallId, output, error }) => {
@@ -573,21 +541,27 @@ export class DurableChatClient<
   /**
    * Create the optimistic action for approval responses.
    *
-   * Note: We use optimistic updates for approvals since we're updating
-   * an existing row (not inserting). The approval ID is known client-side.
-   * The optimistic update provides instant feedback while the server
-   * processes the response.
+   * Finds the message containing the tool call with the approval and updates
+   * the approval.approved field. This propagates to pendingApprovals collection.
    */
   private createApprovalResponseAction() {
     return createOptimisticAction<ApprovalResponseInput>({
       onMutate: ({ id, approved }) => {
-        const approval = this._collections.approvals.get(id)
-        if (approval) {
-          this._collections.approvals.update(id, (draft) => {
-            draft.status = approved ? 'approved' : 'denied'
-            draft.respondedBy = this.actorId
-            draft.respondedAt = new Date()
-          })
+        // Find the message containing this approval
+        for (const message of this._collections.messages.values()) {
+          for (const part of message.parts) {
+            if (part.type === 'tool-call' && part.approval?.id === id) {
+              // Update the message with the approval response
+              this._collections.messages.update(message.id, (draft) => {
+                for (const p of draft.parts) {
+                  if (p.type === 'tool-call' && p.approval?.id === id) {
+                    (p as ToolCallPart).approval!.approved = approved
+                  }
+                }
+              })
+              return
+            }
+          }
         }
       },
       mutationFn: async ({ id, approved }) => {

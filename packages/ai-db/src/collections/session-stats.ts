@@ -1,24 +1,19 @@
 /**
- * Session statistics collection - two-stage derived pipeline.
+ * Session statistics collection - aggregated from chunks.
  *
- * Computes aggregate statistics from the stream. Uses groupBy + collect
- * to gather all rows, then fn.select to compute the stats.
+ * Computes aggregate statistics from the stream by:
+ * 1. Collecting all chunks for the session
+ * 2. Materializing messages and extracting stats from parts
  *
- * This follows the pattern: aggregate first → materialize second
+ * Uses TanStack AI's MessagePart types for type-safe filtering.
  */
 
 import { createLiveQueryCollection, collect } from '@tanstack/db'
 import type { Collection } from '@tanstack/db'
+import type { ToolCallPart, ToolResultPart } from '@tanstack/ai'
 import type { ChunkRow } from '../schema'
 import type { SessionStatsRow, MessageRow } from '../types'
-import {
-  groupRowsByMessage,
-  materializeMessage,
-  extractToolCalls,
-  extractApprovals,
-  detectActiveGenerations,
-  parseChunk,
-} from '../materialize'
+import { materializeMessage, parseChunk } from '../materialize'
 
 // ============================================================================
 // Session Stats Collection
@@ -90,7 +85,27 @@ export function createSessionStatsCollection(
 }
 
 /**
+ * Group chunk rows by messageId.
+ */
+function groupRowsByMessage(rows: ChunkRow[]): Map<string, ChunkRow[]> {
+  const grouped = new Map<string, ChunkRow[]>()
+
+  for (const row of rows) {
+    const existing = grouped.get(row.messageId)
+    if (existing) {
+      existing.push(row)
+    } else {
+      grouped.set(row.messageId, [row])
+    }
+  }
+
+  return grouped
+}
+
+/**
  * Compute session statistics from chunk rows.
+ *
+ * Materializes messages and counts parts by type to derive statistics.
  *
  * @param sessionId - Session identifier
  * @param rows - All chunk rows
@@ -117,31 +132,50 @@ export function computeSessionStats(
     }
   }
 
-  // Count message types
+  // Count message types and extract part counts
   let userMessageCount = 0
   let assistantMessageCount = 0
+  let toolCallCount = 0
+  let pendingApprovalCount = 0
+  let activeGenerationCount = 0
   let firstMessageAt: Date | null = null
   let lastMessageAt: Date | null = null
 
   for (const msg of messages) {
+    // Count by role
     if (msg.role === 'user') {
       userMessageCount++
     } else if (msg.role === 'assistant') {
       assistantMessageCount++
     }
 
+    // Track timestamps
     if (!firstMessageAt || msg.createdAt < firstMessageAt) {
       firstMessageAt = msg.createdAt
     }
     if (!lastMessageAt || msg.createdAt > lastMessageAt) {
       lastMessageAt = msg.createdAt
     }
-  }
 
-  // Extract tool calls and approvals
-  const toolCalls = extractToolCalls(rows)
-  const approvals = extractApprovals(rows)
-  const activeGenerations = detectActiveGenerations(grouped)
+    // Count tool calls and pending approvals from parts
+    for (const part of msg.parts) {
+      if (part.type === 'tool-call') {
+        toolCallCount++
+        const toolCallPart = part as ToolCallPart
+        if (
+          toolCallPart.approval?.needsApproval === true &&
+          toolCallPart.approval.approved === undefined
+        ) {
+          pendingApprovalCount++
+        }
+      }
+    }
+
+    // Count active generations (incomplete messages)
+    if (!msg.isComplete) {
+      activeGenerationCount++
+    }
+  }
 
   // Extract token usage from chunks
   const { totalTokens, promptTokens, completionTokens } = extractTokenUsage(rows)
@@ -151,12 +185,12 @@ export function computeSessionStats(
     messageCount: messages.length,
     userMessageCount,
     assistantMessageCount,
-    toolCallCount: toolCalls.length,
-    approvalCount: approvals.length,
+    toolCallCount,
+    approvalCount: pendingApprovalCount,
     totalTokens,
     promptTokens,
     completionTokens,
-    activeGenerationCount: activeGenerations.length,
+    activeGenerationCount,
     firstMessageAt,
     lastMessageAt,
   }

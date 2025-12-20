@@ -19,8 +19,6 @@ import type { MessageRow, ActiveGenerationRow } from '../types'
  * Options for creating an active generations collection.
  */
 export interface ActiveGenerationsCollectionOptions {
-  /** Session identifier */
-  sessionId: string
   /** Messages collection to derive from */
   messagesCollection: Collection<MessageRow>
 }
