@@ -1,5 +1,5 @@
 {
-  "name": "@electric-sql/tanstack-ai-transport",
+  "name": "@durable-streams/tanstack-ai-transport",
   "version": "0.1.0",
   "description": "Durable transport adapter for TanStack AI.",
   "type": "module",
@@ -23,7 +23,7 @@
   "author": "ElectricSQL",
   "license": "Apache-2.0",
   "dependencies": {
-    "@electric-sql/transport": "workspace:*"
+    "@durable-streams/transport": "workspace:*"
   },
   "devDependencies": {
     "@tanstack/ai": "workspace:*",

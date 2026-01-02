@@ -1,6 +1,11 @@
-import { ShapeStream } from '@electric-sql/client'
-import type { ChangeMessage, ControlMessage } from '@electric-sql/client'
-import { responseSchema, type APIResponse } from './schema'
+import { stream as durableStream } from '@durable-streams/client'
+import type { StreamResponse, Offset } from '@durable-streams/client'
+import {
+  responseSchema,
+  streamEventSchema,
+  type APIResponse,
+  type StreamEvent,
+} from './schema'
 import {
   setActiveGeneration,
   clearActiveGeneration,
@@ -9,8 +14,6 @@ import {
 
 type CleanupFn = () => void
 type AuthHeaders = Record<string, string>
-type Message = ChangeMessage<Record<string, unknown>> | ControlMessage
-type Stream = ShapeStream<Record<string, unknown>>
 
 export type CreateRequest = {
   sessionId: string
@@ -22,8 +25,7 @@ export type CreateRequest = {
 }
 
 export type StreamResult = {
-  dataStream: Stream
-  controlStream: Stream
+  streamResponse: StreamResponse<StreamEvent>
   cleanup: CleanupFn
   sessionId: string
   responseData: APIResponse
@@ -32,9 +34,6 @@ export type StreamResult = {
 export interface ProxyError extends Error {
   response: Response
 }
-
-// Pending close state - either done or error
-type PendingClose = { type: `done` } | { type: `error`; message: string }
 
 function createLinkedAbortController(signal?: AbortSignal): AbortController {
   const controller = new AbortController()
@@ -88,8 +87,7 @@ async function fetchProxyResponseData(
 }
 
 // Given the request `data` and `auth` headers to make a request to the API proxy endpoint,
-// make the request and then establish shape stream subscriptions to both the data and control
-// streams written to by the proxy endpoint.
+// make the request and then establish a Durable Stream subscription to read the response.
 export async function create(
   proxyUrl: string,
   request: CreateRequest,
@@ -105,34 +103,22 @@ export async function create(
     auth,
     signal
   )
-  const { requestId, sessionId, streamUrl, controlUrl } = responseData
+  const { sessionId, streamUrl } = responseData
 
-  const dataStream = new ShapeStream({
+  // Subscribe to the Durable Stream with SSE for live updates
+  const streamResponse = await durableStream<StreamEvent>({
     url: streamUrl,
-    params: {
-      requestId,
-      sessionId,
-    },
-    liveSse: true,
-    signal: signal,
-  })
-
-  const controlStream = new ShapeStream({
-    url: controlUrl,
-    params: {
-      requestId,
-      sessionId,
-    },
-    liveSse: true,
-    signal: signal,
+    offset: `-1`, // Start from beginning
+    live: `sse`,
+    signal,
   })
 
   return {
-    dataStream,
-    controlStream,
+    streamResponse,
     cleanup: () => {
       try {
         controller.abort()
+        streamResponse.cancel()
       } finally {
         clearActiveGeneration(sessionId)
       }
@@ -154,7 +140,7 @@ export type ResumeOptions = {
   replayFromStart?: boolean
 }
 
-// Given the persisted active generation data, resume the stream subscriptions.
+// Given the persisted active generation data, resume the stream subscription.
 //
 // By default, resumes from the stored offset (efficient for network reconnection).
 // Set `replayFromStart: true` to replay from the beginning (required for page-reload
@@ -168,48 +154,25 @@ export async function resume(
   const controller = createLinkedAbortController(externalAbortSignal)
   const signal = controller.signal
 
-  const { requestId, sessionId, streamUrl, controlUrl } = activeGen.data
+  const { sessionId, streamUrl } = activeGen.data
 
-  // When replaying from start, don't pass handle/offset so we get all data
-  // from the beginning of this request's stream.
-  const dataStream = new ShapeStream({
+  // When replaying from start, use offset -1 to get all data from the beginning
+  const offset: Offset = replayFromStart ? `-1` : activeGen.streamOffset
+
+  // Subscribe to the Durable Stream with SSE for live updates
+  const streamResponse = await durableStream<StreamEvent>({
     url: streamUrl,
-    ...(replayFromStart
-      ? {}
-      : {
-          handle: activeGen.dataShapeHandle,
-          offset: activeGen.dataShapeOffset,
-        }),
-    params: {
-      requestId,
-      sessionId,
-    },
-    liveSse: true,
-    signal: signal,
-  })
-
-  const controlStream = new ShapeStream({
-    url: controlUrl,
-    ...(replayFromStart
-      ? {}
-      : {
-          handle: activeGen.controlShapeHandle,
-          offset: activeGen.controlShapeOffset,
-        }),
-    params: {
-      requestId,
-      sessionId,
-    },
-    liveSse: true,
-    signal: signal,
+    offset,
+    live: `sse`,
+    signal,
   })
 
   return {
-    dataStream,
-    controlStream,
+    streamResponse,
     cleanup: () => {
       try {
         controller.abort()
+        streamResponse.cancel()
       } finally {
         clearActiveGeneration(sessionId)
       }
@@ -220,19 +183,17 @@ export async function resume(
 }
 
 /**
- * Read both the data and control ShapeStreams into a single ReadableStream of chunks.
+ * Read a Durable Stream into a ReadableStream of chunks.
  *
- * This function subscribes to both streams and coordinates their messages:
- * - Data stream: contains raw data chunks
- * - Control stream: contains lifecycle events (done, error)
+ * This function subscribes to the stream and parses JSON events:
+ * - data events: contain raw SSE chunks from the upstream API
+ * - done events: signal stream completion
+ * - error events: signal stream errors
  *
- * The control message includes a `data_row_id` field that specifies the row ID
- * of the last data chunk. The client waits for all data up to that row ID before
- * closing or erroring the stream, preventing race conditions.
+ * The function persists the stream offset for resumption after each batch.
  */
 export async function read(
-  dataStream: Stream,
-  controlStream: Stream,
+  streamResponse: StreamResponse<StreamEvent>,
   cleanup: CleanupFn,
   sessionId: string,
   responseData: APIResponse,
@@ -240,25 +201,15 @@ export async function read(
 ): Promise<ReadableStream> {
   const encoder = new TextEncoder()
   let isClosed = false
-  let dataUnsubscribe: (() => void) | null = null
-  let controlUnsubscribe: (() => void) | null = null
-
-  // Row ID tracking for close synchronization
-  let lastReceivedRowId = `0`.padStart(20, `0`)
-  let closeAfterRowId: string | null = null
-  let pendingClose: PendingClose | null = null
+  let unsubscribe: (() => void) | null = null
 
   const closeStream = () => {
     if (isClosed) return
 
     isClosed = true
-    if (dataUnsubscribe !== null) {
-      dataUnsubscribe()
-      dataUnsubscribe = null
-    }
-    if (controlUnsubscribe !== null) {
-      controlUnsubscribe()
-      controlUnsubscribe = null
+    if (unsubscribe !== null) {
+      unsubscribe()
+      unsubscribe = null
     }
 
     cleanup()
@@ -266,33 +217,6 @@ export async function read(
 
   return new ReadableStream<Uint8Array>({
     start: async (controller) => {
-      // Check if we should close/error the stream
-      // Called after each data row AND after receiving control messages
-      const maybeClose = () => {
-        if (isClosed) return
-        if (pendingClose === null) return
-        if (closeAfterRowId === null) return
-        if (lastReceivedRowId < closeAfterRowId) return
-
-        // We've received all data up to the close point
-        if (pendingClose.type === `done`) {
-          closeStream()
-          try {
-            controller.close()
-          } catch (_err) {
-            // Controller may already be closed
-          }
-        } else {
-          // Error case - deliver the error after all data
-          closeStream()
-          try {
-            controller.error(new Error(pendingClose.message))
-          } catch (_err) {
-            // Controller may already be closed/errored
-          }
-        }
-      }
-
       const close = () => {
         closeStream()
 
@@ -308,78 +232,51 @@ export async function read(
       }
 
       try {
-        // Subscribe to data stream
-        dataUnsubscribe = dataStream.subscribe((messages: Message[]) => {
+        // Subscribe to the Durable Stream
+        unsubscribe = streamResponse.subscribeJson(async (batch) => {
           if (isClosed) return
 
-          for (const msg of messages) {
+          for (const item of batch.items) {
             if (isClosed) break
 
-            const isControlMessage = `control` in msg.headers
-            if (isControlMessage) continue
-
-            const changeMsg = msg as ChangeMessage<Record<string, unknown>>
-            const row = changeMsg.value
-
-            // Update last received row ID
-            const rowId = (row.id as number).toString().padStart(20, `0`)
-            if (rowId > lastReceivedRowId) {
-              lastReceivedRowId = rowId
+            // Parse and validate the event
+            const parseResult = streamEventSchema.safeParse(item)
+            if (!parseResult.success) {
+              // Skip malformed events
+              continue
             }
 
-            // Emit raw data
-            if (row.data && !isClosed) {
-              controller.enqueue(encoder.encode(row.data as string))
-            }
+            const event = parseResult.data
 
-            // Check after EACH row if we should close
-            maybeClose()
-          }
-
-          // Persist state for resumption (shape offsets, not row IDs)
-          if (!isClosed) {
-            setActiveGeneration(
-              sessionId,
-              responseData,
-              dataStream.shapeHandle!,
-              dataStream.lastOffset,
-              controlStream.shapeHandle!,
-              controlStream.lastOffset,
-              lastReceivedRowId
-            )
-          }
-        })
-
-        // Subscribe to control stream
-        controlUnsubscribe = controlStream.subscribe((messages: Message[]) => {
-          if (isClosed) return
-
-          for (const msg of messages) {
-            if (isClosed) break
-
-            const isControlMessage = `control` in msg.headers
-            if (isControlMessage) continue
-
-            const changeMsg = msg as ChangeMessage<Record<string, unknown>>
-            const row = changeMsg.value
-            const event = row.event as string
-            const dataRowId = row.data_row_id as string
-
-            if (event === `done`) {
-              closeAfterRowId = dataRowId
-              pendingClose = { type: `done` }
-              maybeClose()
-            }
-
-            if (event === `error`) {
-              closeAfterRowId = dataRowId
-              const payload = row.payload as { message?: string } | null
-              pendingClose = {
-                type: `error`,
-                message: payload?.message || `Stream error`,
+            if (event.type === `data`) {
+              // Emit raw data payload
+              if (!isClosed) {
+                controller.enqueue(encoder.encode(event.payload))
               }
-              maybeClose()
+            } else if (event.type === `done`) {
+              // Stream completed
+              closeStream()
+              try {
+                controller.close()
+              } catch (_err) {
+                // Controller may already be closed
+              }
+              return
+            } else if (event.type === `error`) {
+              // Stream error
+              closeStream()
+              try {
+                controller.error(new Error(event.message))
+              } catch (_err) {
+                // Controller may already be closed/errored
+              }
+              return
             }
+          }
+
+          // Persist state for resumption after each batch
+          if (!isClosed) {
+            setActiveGeneration(sessionId, responseData, batch.offset)
           }
         })
       } catch (error) {

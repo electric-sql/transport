@@ -24,7 +24,7 @@
     "transport-backend:down": "docker compose -f ./support/docker-compose.yaml stop postgres electric",
     "session-backend:up": "pnpm backend:down && docker compose -f ./support/docker-compose.yaml up -d durable-streams",
     "session-backend:down": "docker compose -f ./support/docker-compose.yaml stop durable-streams",
-    "dev:transport-proxy": "dotenv -- pnpm --filter @electric-sql/transport-proxy dev",
+    "dev:transport-proxy": "dotenv -- pnpm --filter @durable-streams/transport-proxy dev",
     "dev:session-proxy": "dotenv -- pnpm --filter @electric-sql/ai-db-proxy dev",
     "dev:demo": "dotenv -- node ./scripts/dev-demo.js",
     "build": "dotenv -- pnpm -r build",

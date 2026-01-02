@@ -9,7 +9,7 @@
     "test": "exit 0"
   },
   "dependencies": {
-    "@electric-sql/tanstack-ai-transport": "workspace:*",
+    "@durable-streams/tanstack-ai-transport": "workspace:*",
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/ai": "workspace:*",
     "@tanstack/ai-client": "workspace:*",

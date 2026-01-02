@@ -1,5 +1,5 @@
 {
-  "name": "@electric-sql/ai-transport",
+  "name": "@durable-streams/ai-transport",
   "version": "0.1.0",
   "description": "Durable transport adapter for the Vercel AI SDK.",
   "type": "module",
@@ -23,7 +23,7 @@
   "author": "ElectricSQL",
   "license": "Apache-2.0",
   "dependencies": {
-    "@electric-sql/transport": "workspace:*"
+    "@durable-streams/transport": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",

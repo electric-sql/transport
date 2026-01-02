@@ -11,7 +11,7 @@
   "dependencies": {
     "@ai-sdk/openai": "3.0.0-beta.75",
     "@ai-sdk/react": "3.0.0-beta.127",
-    "@electric-sql/ai-transport": "workspace:*",
+    "@durable-streams/ai-transport": "workspace:*",
     "ai": "6.0.0-beta.127",
     "next": "^15.5.4",
     "react": "^19",

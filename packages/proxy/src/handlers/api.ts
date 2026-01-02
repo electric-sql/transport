@@ -1,13 +1,12 @@
 import type { Readable } from 'stream'
-import { proxyUrl } from '../config'
-import { insertDataChunk, insertControlMessage } from '../db'
+import { DurableStream } from '@durable-streams/client'
+import { durableStreamsUrl, proxyUrl } from '../config'
 import type { APIRequestParams, APIRequestHeaders } from '../schema'
 
 export type APIResponse = {
   sessionId: string
   requestId: string
   streamUrl: string
-  controlUrl: string
   contentType?: string
 }
 
@@ -24,30 +23,30 @@ export type APIRequestData = {
 }
 
 /**
- * Process a streaming API response by relaying raw chunks to the database.
+ * Process a streaming API response by relaying raw chunks to a Durable Stream.
  *
  * Uses a buffer accumulation pattern that maximizes throughput:
  * - Consumes the HTTP stream as fast as possible
- * - Writes to DB as fast as the DB allows
+ * - Writes to Durable Stream as fast as it allows
  * - Accumulates chunks in memory while a write is in progress
- * - When write completes, flushes accumulated buffer as a single row
+ * - When write completes, flushes accumulated buffer
  *
- * This is protocol-agnostic: we relay raw bytes without parsing.
+ * This is protocol-agnostic: we wrap raw bytes in JSON events without parsing.
  *
- * Tracks the lastDataRowId for each insert to enable synchronization
- * between the data and control streams.
+ * Event types written to the stream:
+ * - { type: "data", payload: string } - raw SSE chunk from upstream
+ * - { type: "done", finishReason: string } - stream completed
+ * - { type: "error", message: string } - stream error
  */
 async function processApiResponse(
-  sessionId: string,
-  requestId: string,
+  stream: DurableStream,
   body: ReadableStream<Uint8Array>
 ): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
 
   let buffer = ``
-  let writeInProgress: Promise<string> | null = null
-  let lastDataRowId: string = `0`.padStart(20, `0`)
+  let writeInProgress: Promise<void> | null = null
 
   const flush = (): void => {
     if (writeInProgress !== null || buffer.length === 0) return
@@ -55,11 +54,8 @@ async function processApiResponse(
     const chunk = buffer
     buffer = ``
 
-    writeInProgress = insertDataChunk(sessionId, requestId, chunk)
-      .then((rowId) => {
-        lastDataRowId = rowId
-        return rowId
-      })
+    writeInProgress = stream
+      .append({ type: `data`, payload: chunk })
       .finally(() => {
         writeInProgress = null
         flush()
@@ -91,26 +87,23 @@ async function processApiResponse(
       }
     }
 
-    // Write control message with final data row ID
-    await insertControlMessage(sessionId, requestId, `done`, lastDataRowId, {
-      finishReason: `complete`,
-    })
+    // Write done event
+    await stream.append({ type: `done`, finishReason: `complete` })
   } catch (error) {
     const message = error instanceof Error ? error.message : `Unknown error`
-    await insertControlMessage(sessionId, requestId, `error`, lastDataRowId, {
-      message,
-    })
+    await stream.append({ type: `error`, message })
     throw error
   }
 }
 
 /**
- * Handle API requests by proxying to the upstream API and streaming the response to the database.
+ * Handle API requests by proxying to the upstream API and streaming the response
+ * to a Durable Stream.
  *
  * This handler is protocol-agnostic:
  * - Streams the request body directly to the upstream API without parsing
  * - Forwards headers as-is (client sets Content-Type)
- * - Relays raw response bytes to the database
+ * - Relays raw response bytes to the Durable Stream as JSON events
  *
  * Request format:
  * - Path: /api/:sessionId/:requestId
@@ -141,17 +134,26 @@ export async function handleApiRequest(
     }
   }
 
+  // Create the Durable Stream for this request
+  const streamUrl = `${durableStreamsUrl}/stream/${sessionId}/${requestId}`
+  const stream = await DurableStream.create({
+    url: streamUrl,
+    contentType: `application/json`,
+  })
+
   if (response.body) {
     // Process the response stream in the background
-    // Errors are handled inside processApiResponse (writes error to control stream)
-    processApiResponse(sessionId, requestId, response.body).catch(() => {})
+    // Errors are handled inside processApiResponse (writes error event to stream)
+    processApiResponse(stream, response.body).catch(() => {})
+  } else {
+    // No body - write done event immediately
+    stream.append({ type: `done`, finishReason: `complete` }).catch(() => {})
   }
 
   return {
     sessionId,
     requestId,
-    streamUrl: `${proxyUrl}/stream/data`,
-    controlUrl: `${proxyUrl}/stream/control`,
+    streamUrl,
     contentType: response.headers.get(`Content-Type`) ?? undefined,
   }
 }

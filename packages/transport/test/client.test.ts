@@ -15,17 +15,16 @@ vi.stubGlobal(`crypto`, { randomUUID: mockRandomUUID })
 describe(`createFetchClient`, () => {
   const proxyUrl = `http://localhost:4000/api`
   const mockCleanup = vi.fn()
+  const mockStreamResponse = { subscribeJson: vi.fn() }
 
   const createMockStreamResult = (overrides = {}) => ({
-    dataStream: { id: `mock-data-stream` },
-    controlStream: { id: `mock-control-stream` },
+    streamResponse: mockStreamResponse,
     cleanup: mockCleanup,
     sessionId: `mock-session-id`,
     responseData: {
       sessionId: `mock-session-id`,
       requestId: `mock-request-id`,
       streamUrl: `http://localhost:4000/stream/data`,
-      controlUrl: `http://localhost:4000/stream/control`,
       contentType: `text/event-stream`,
     },
     ...overrides,
@@ -309,15 +308,13 @@ describe(`createFetchClient`, () => {
       expect(response.body).toBe(mockBody)
     })
 
-    it(`calls read with both data and control streams from create`, async () => {
-      const mockDataStream = { id: `test-data-stream` }
-      const mockControlStream = { id: `test-control-stream` }
+    it(`calls read with streamResponse from create`, async () => {
       const mockBody = new ReadableStream()
+      const testStreamResponse = { subscribeJson: vi.fn(), id: `test-stream` }
 
       vi.mocked(stream.create).mockResolvedValue(
         createMockStreamResult({
-          dataStream: mockDataStream,
-          controlStream: mockControlStream,
+          streamResponse: testStreamResponse,
         })
       )
       vi.mocked(stream.read).mockResolvedValue(mockBody)
@@ -331,15 +328,13 @@ describe(`createFetchClient`, () => {
       })
 
       expect(stream.read).toHaveBeenCalledWith(
-        mockDataStream,
-        mockControlStream,
+        testStreamResponse,
         mockCleanup,
         `mock-session-id`,
         expect.objectContaining({
           sessionId: `mock-session-id`,
           requestId: `mock-request-id`,
           streamUrl: `http://localhost:4000/stream/data`,
-          controlUrl: `http://localhost:4000/stream/control`,
         })
       )
     })

@@ -1,5 +1,16 @@
 export { createFetchClient, type FetchClientOptions } from './client'
-export { responseSchema, type APIResponse } from './schema'
+export {
+  responseSchema,
+  streamEventSchema,
+  dataEventSchema,
+  doneEventSchema,
+  errorEventSchema,
+  type APIResponse,
+  type StreamEvent,
+  type DataEvent,
+  type DoneEvent,
+  type ErrorEvent,
+} from './schema'
 export {
   create,
   read,
