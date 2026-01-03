@@ -1052,7 +1052,7 @@ importers:
     dependencies:
       '@electric-sql/react-durable-session':
         specifier: workspace:*
-        version: link:../../packages/react-ai-db
+        version: link:../../packages/react-durable-session
       '@tailwindcss/vite':
         specifier: ^4.1.17
         version: 4.1.17(vite@7.2.6(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0)(yaml@2.8.2))
@@ -1300,7 +1300,26 @@ importers:
         specifier: 5.8.3
         version: 5.8.3
 
-  packages/ai-db:
+  packages/ai-transport:
+    dependencies:
+      '@durable-streams/transport':
+        specifier: workspace:*
+        version: link:../transport
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.0
+        version: 24.10.1
+      ai:
+        specifier: 6.0.0-beta.128
+        version: 6.0.0-beta.128(arktype@2.1.28)(zod@4.1.13)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@24.10.1)(@vitest/ui@2.1.9)(jsdom@27.2.0)(lightningcss@1.30.2)(terser@5.44.1)
+
+  packages/durable-session:
     dependencies:
       '@durable-streams/state':
         specifier: workspace:*
@@ -1331,14 +1350,17 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@24.10.1)(@vitest/ui@2.1.9)(jsdom@27.2.0)(lightningcss@1.30.2)(terser@5.44.1)
 
-  packages/ai-db-proxy:
+  packages/durable-session-proxy:
     dependencies:
       '@durable-streams/client':
         specifier: workspace:*
         version: link:../../../../durable-streams/durable-streams/packages/client
       '@electric-sql/durable-session':
         specifier: workspace:*
-        version: link:../ai-db
+        version: link:../durable-session
+      '@tanstack/db':
+        specifier: workspace:*
+        version: link:../../../../TanStack/db/packages/db
       hono:
         specifier: ^4.4.0
         version: 4.10.7
@@ -1355,25 +1377,6 @@ importers:
       tsx:
         specifier: ^4.20.6
         version: 4.21.0
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.8
-        version: 2.1.9(@types/node@24.10.1)(@vitest/ui@2.1.9)(jsdom@27.2.0)(lightningcss@1.30.2)(terser@5.44.1)
-
-  packages/ai-transport:
-    dependencies:
-      '@durable-streams/transport':
-        specifier: workspace:*
-        version: link:../transport
-    devDependencies:
-      '@types/node':
-        specifier: ^24.10.0
-        version: 24.10.1
-      ai:
-        specifier: 6.0.0-beta.128
-        version: 6.0.0-beta.128(arktype@2.1.28)(zod@4.1.13)
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -1421,11 +1424,11 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@24.10.1)(@vitest/ui@2.1.9)(jsdom@27.2.0)(lightningcss@1.30.2)(terser@5.44.1)
 
-  packages/react-ai-db:
+  packages/react-durable-session:
     dependencies:
       '@electric-sql/durable-session':
         specifier: workspace:*
-        version: link:../ai-db
+        version: link:../durable-session
       '@tanstack/react-db':
         specifier: workspace:*
         version: link:../../../../TanStack/db/packages/react-db
