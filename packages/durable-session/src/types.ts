@@ -17,6 +17,7 @@ import type {
 } from '@tanstack/ai'
 import type { Collection } from '@tanstack/db'
 import type { LiveMode } from '@durable-streams/state'
+import type { SessionDB } from './collection'
 
 // Re-export schema types
 export type { ChunkRow, ChunkValue, PresenceRow, AgentRow } from './schema'
@@ -332,7 +333,7 @@ export interface DurableChatClientOptions<
    * This allows tests to inject mock collections with controlled data.
    * @internal
    */
-  sessionDB?: import('./collection').SessionDB
+  sessionDB?: SessionDB
 }
 
 // ============================================================================

@@ -16,7 +16,7 @@ import { DurableChatClient } from '@electric-sql/durable-session'
 import { useDurableChat } from '../src/use-durable-chat'
 import type { UIMessage } from '@tanstack/ai'
 
-// Import test helpers from ai-db
+// Import test helpers from durable-session
 import {
   createMockSessionDB,
   loadTestData,
@@ -25,7 +25,7 @@ import {
   TEST_MESSAGE_IDS,
   EXPECTED_CONTENT,
   type MockSessionDBControllers,
-} from '../../ai-db/tests/fixtures/test-helpers'
+} from '../../durable-session/tests/fixtures/test-helpers'
 
 describe('useDurableChat integration', () => {
   const testData = loadTestData()
@@ -35,26 +35,33 @@ describe('useDurableChat integration', () => {
   let controllers: MockSessionDBControllers
   let client: DurableChatClient
 
-  beforeEach(async () => {
+  beforeEach(() => {
     // Create mock session DB with controllers for all collections
     mockSessionDB = createMockSessionDB('test-session')
     controllers = mockSessionDB.controllers
 
     // Create real client with injected mock session DB
+    // NOTE: Don't connect here - let each test connect inside act() to avoid
+    // act() warnings from subscription callbacks firing during initial render
     client = new DurableChatClient({
       sessionId: 'test-session',
       proxyUrl: 'http://localhost:4000',
       sessionDB: mockSessionDB.sessionDB,
     })
-
-    // Connect the client - this calls sessionDB.preload() which sets up collections
-    // After connect, the hook will detect connectionStatus === 'connected' and set up subscriptions
-    await client.connect()
   })
 
   afterEach(() => {
     client.dispose()
   })
+
+  /**
+   * Helper to wait for the client to be connected.
+   */
+  async function waitForConnected(result: { current: { connectionStatus: string } }): Promise<void> {
+    await waitFor(() => {
+      expect(result.current.connectionStatus).toBe('connected')
+    })
+  }
 
   describe('initial state', () => {
     it('should return empty messages array initially', async () => {
@@ -75,11 +82,10 @@ describe('useDurableChat integration', () => {
       expect(result.current.error).toBeUndefined()
     })
 
-    it('should have connected connection status when client is pre-connected', () => {
-      // Client is pre-connected in beforeEach, hook detects this and sets up subscriptions
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+    it('should have connected connection status after autoConnect', async () => {
+      const { result } = renderHook(() => useDurableChat({ client }))
 
-      expect(result.current.connectionStatus).toBe('connected')
+      await waitForConnected(result)
     })
   })
 
@@ -121,7 +127,8 @@ describe('useDurableChat integration', () => {
 
   describe('message materialization via live query pipeline', () => {
     it('should materialize a user message from stream data', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Emit user message (wrapped in act for React state updates)
       const userMessageRows = getMessageRows(testData, TEST_MESSAGE_IDS.USER_1)
@@ -141,7 +148,8 @@ describe('useDurableChat integration', () => {
     })
 
     it('should materialize user + assistant messages in correct order', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Emit user message
       await act(async () => {
@@ -169,7 +177,8 @@ describe('useDurableChat integration', () => {
     })
 
     it('should handle full conversation flow', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Emit all test data at once (simulates reconnect/catch-up)
       await act(async () => {
@@ -201,7 +210,8 @@ describe('useDurableChat integration', () => {
 
   describe('streaming updates', () => {
     it('should update messages reactively as chunks stream in', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Emit user message first
       await act(async () => {
@@ -260,7 +270,8 @@ describe('useDurableChat integration', () => {
      * - ... and so on to "Hi there! How can I assist you today?"
      */
     it('should update message TEXT CONTENT incrementally as chunks stream in', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Helper to extract text content from a message
       const getTextContent = (message: UIMessage): string => {
@@ -339,7 +350,8 @@ describe('useDurableChat integration', () => {
      * all chunks in rapid fire (no delays between) to verify the behavior.
      */
     it('should handle rapid chunk arrival (all chunks emitted quickly)', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Helper to extract text content from a message
       const getTextContent = (message: UIMessage): string => {
@@ -395,7 +407,7 @@ describe('useDurableChat integration', () => {
       const observedContents: string[] = []
 
       const { result } = renderHook(() => {
-        const hook = useDurableChat({ client, autoConnect: false })
+        const hook = useDurableChat({ client })
         // Track observed content on each render
         const assistantMsg = hook.messages.find(m => m.role === 'assistant')
         if (assistantMsg) {
@@ -407,6 +419,8 @@ describe('useDurableChat integration', () => {
         }
         return hook
       })
+
+      await waitForConnected(result)
 
       // Patch subscribeChanges to count fires
       const originalSubscribe = client.collections.messages.subscribeChanges.bind(client.collections.messages)
@@ -451,7 +465,8 @@ describe('useDurableChat integration', () => {
      * get the complete message content.
      */
     it('should handle all chunks in a single transaction (batch sync)', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Helper to extract text content from a message
       const getTextContent = (message: UIMessage): string => {
@@ -491,7 +506,8 @@ describe('useDurableChat integration', () => {
 
   describe('isLoading state', () => {
     it('should track isLoading based on active generations', async () => {
-      const { result } = renderHook(() => useDurableChat({ client, autoConnect: false }))
+      const { result } = renderHook(() => useDurableChat({ client }))
+      await waitForConnected(result)
 
       // Initially not loading
       expect(result.current.isLoading).toBe(false)

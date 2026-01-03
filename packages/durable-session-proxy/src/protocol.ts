@@ -13,7 +13,7 @@ import { DurableStream } from '@durable-streams/client'
 import {
   sessionStateSchema,
   createSessionDB,
-  createMessagesPipeline,
+  createMessagesCollection,
   createModelMessagesCollection,
 } from '@electric-sql/durable-session'
 import type { StreamChunk, AgentSpec, ProxySessionState, AIDBProtocolOptions } from './types'
@@ -212,9 +212,8 @@ export class AIDBSessionProtocol {
     // After this, all historical messages are in the collections
     await sessionDB.preload()
 
-    // Create the messages pipeline
-    const { messages } = createMessagesPipeline({
-      sessionId,
+    // Create the messages collection from chunks
+    const messages = createMessagesCollection({
       chunksCollection: sessionDB.collections.chunks,
     })
 

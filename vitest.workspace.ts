@@ -33,21 +33,6 @@ export default defineWorkspace([
   },
   {
     test: {
-      name: 'ai-db',
-      root: './packages/ai-db',
-      globals: true,
-      environment: 'node',
-      include: ['tests/**/*.test.ts'],
-      coverage: {
-        provider: 'v8',
-        reporter: ['text', 'json', 'html'],
-        include: ['src/**/*.ts'],
-        exclude: ['src/**/*.d.ts'],
-      },
-    },
-  },
-  {
-    test: {
       name: 'tanstack-ai-transport',
       root: './packages/tanstack-ai-transport',
       globals: true,
@@ -63,8 +48,23 @@ export default defineWorkspace([
   },
   {
     test: {
-      name: 'react-ai-db',
-      root: './packages/react-ai-db',
+      name: 'durable-session',
+      root: './packages/durable-session',
+      globals: true,
+      environment: 'node',
+      include: ['tests/**/*.test.ts'],
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'json', 'html'],
+        include: ['src/**/*.ts'],
+        exclude: ['src/**/*.d.ts'],
+      },
+    },
+  },
+  {
+    test: {
+      name: 'react-durable-session',
+      root: './packages/react-durable-session',
       globals: true,
       environment: 'jsdom',
       include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
