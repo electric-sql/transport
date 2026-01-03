@@ -73,6 +73,14 @@ pnpm dev:demo tanstack-ai-durable-session
 # pnpm dev:demo vercel-ai-sdk-durable-transport
 ```
 
+You can also use the [@durable-streams CLI](https://github.com/durable-streams/durable-streams/tree/main/packages/cli) to write directly to a stream, in order to demonstrate "out of band writes" e.g.:
+
+```sh
+source .env
+cd demos/tanstack-ai-durable-session
+cat example.json | durable-stream-dev write "sessions/default" --json
+```
+
 ## Caveats
 
 Some dependencies are still currently workspace dependencies. See `pnpm-workspace.yaml` for details.
