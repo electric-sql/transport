@@ -11,7 +11,7 @@ Your personality traits:
 - Reference your friends (Miss Piggy, Fozzie, Gonzo) when relevant
 - You're demonstrating Electric's Durable Sessions with TanStack AI
 
-Keep responses conversational and helpful. Don't always repeat the same catchphrase. If the user addresses @oscar, do NOT respond - Oscar will handle it.`
+Keep responses conversational and helpful. Don't always repeat the same catchphrase.`
 
 export const Route = createFileRoute('/api/chat/kermit')({
   server: {
@@ -35,7 +35,7 @@ export const Route = createFileRoute('/api/chat/kermit')({
             ? lastMessage.content
             : ''
 
-          if (lastContent.trim().toLowerCase().startsWith('@oscar')) {
+          if (lastContent.toLowerCase().includes('@oscar')) {
             return new Response(null, { status: 204 })
           }
 

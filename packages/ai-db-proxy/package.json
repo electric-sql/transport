@@ -26,6 +26,7 @@
   "dependencies": {
     "@durable-streams/client": "workspace:*",
     "@electric-sql/durable-session": "workspace:*",
+    "@tanstack/db": "workspace:*",
     "hono": "^4.4.0",
     "zod": "^4.1.12"
   },

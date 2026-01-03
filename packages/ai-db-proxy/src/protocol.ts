@@ -10,8 +10,13 @@
  */
 
 import { DurableStream } from '@durable-streams/client'
-import { sessionStateSchema } from '@electric-sql/durable-session'
-import type { StreamChunk, AgentSpec, SessionState, AIDBProtocolOptions } from './types'
+import {
+  sessionStateSchema,
+  createSessionDB,
+  createMessagesPipeline,
+  createModelMessagesCollection,
+} from '@electric-sql/durable-session'
+import type { StreamChunk, AgentSpec, ProxySessionState, AIDBProtocolOptions } from './types'
 
 // Map role to the role type expected by the schema
 type MessageRole = 'user' | 'assistant' | 'system'
@@ -48,8 +53,8 @@ export class AIDBSessionProtocol {
   /** Active generation abort controllers */
   private activeAbortControllers = new Map<string, AbortController>()
 
-  /** Session state (in-memory for now, could be persisted) */
-  private sessionStates = new Map<string, SessionState>()
+  /** Session state with SessionDB and collections for message materialization */
+  private sessionStates = new Map<string, ProxySessionState>()
 
   constructor(options: AIDBProtocolOptions) {
     this.baseUrl = options.baseUrl
@@ -82,14 +87,13 @@ export class AIDBSessionProtocol {
 
     this.streams.set(sessionId, stream)
 
-    // Initialize session state
-    this.initializeSessionState(sessionId)
+    // Initialize session state with SessionDB and collections
+    await this.initializeSessionState(sessionId)
 
     // Register default agents if provided
     if (defaultAgents && defaultAgents.length > 0) {
       for (const agent of defaultAgents) {
         await this.writeAgentRegistration(stream, sessionId, agent)
-        // Also update in-memory state
         const state = this.sessionStates.get(sessionId)
         if (state) {
           state.agents.push(agent)
@@ -127,10 +131,17 @@ export class AIDBSessionProtocol {
   /**
    * Delete a session stream.
    *
-   * Note: DurableStream is a lightweight handle (no persistent connection),
-   * so we just remove it from the map.
+   * Cleans up the DurableStream handle, SessionDB, and subscriptions.
    */
   deleteSession(sessionId: string): void {
+    const state = this.sessionStates.get(sessionId)
+    if (state) {
+      // Unsubscribe from changes
+      state.changeSubscription?.unsubscribe()
+      // Close SessionDB to cleanup stream subscription
+      state.sessionDB.close()
+    }
+
     this.streams.delete(sessionId)
     this.sessionStates.delete(sessionId)
   }
@@ -175,21 +186,6 @@ export class AIDBSessionProtocol {
   }
 
   /**
-   * Initialize session state.
-   */
-  private initializeSessionState(sessionId: string): void {
-    if (!this.sessionStates.has(sessionId)) {
-      const initialState: SessionState = {
-        createdAt: new Date().toISOString(),
-        lastActivityAt: new Date().toISOString(),
-        agents: [],
-        activeGenerations: [],
-      }
-      this.sessionStates.set(sessionId, initialState)
-    }
-  }
-
-  /**
    * Update session's last activity timestamp.
    */
   private updateLastActivity(sessionId: string): void {
@@ -197,6 +193,106 @@ export class AIDBSessionProtocol {
     if (state) {
       state.lastActivityAt = new Date().toISOString()
     }
+  }
+
+  /**
+   * Initialize session state with SessionDB and message collections.
+   *
+   * Creates a SessionDB that syncs from the session's stream and sets up
+   * the message materialization pipeline.
+   */
+  private async initializeSessionState(sessionId: string): Promise<void> {
+    // Create SessionDB (same as client does)
+    const sessionDB = createSessionDB({
+      sessionId,
+      baseUrl: this.baseUrl,
+    })
+
+    // Preload to sync initial data from stream
+    // After this, all historical messages are in the collections
+    await sessionDB.preload()
+
+    // Create the messages pipeline
+    const { messages } = createMessagesPipeline({
+      sessionId,
+      chunksCollection: sessionDB.collections.chunks,
+    })
+
+    // Create the model messages collection (LLM-ready)
+    const modelMessages = createModelMessagesCollection({
+      messagesCollection: messages,
+    })
+
+    // Store in session state (subscription added in setupReactiveAgentTrigger)
+    const state: ProxySessionState = {
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      agents: [],
+      activeGenerations: [],
+      sessionDB,
+      messages,
+      modelMessages,
+      changeSubscription: null,
+      isReady: true,
+    }
+
+    this.sessionStates.set(sessionId, state)
+
+    // Set up reactive agent triggering
+    // IMPORTANT: This must happen AFTER preload completes.
+    // subscribeChanges() only fires for changes AFTER subscription,
+    // so historical messages won't trigger agents.
+    this.setupReactiveAgentTrigger(sessionId)
+  }
+
+  /**
+   * Set up reactive agent triggering for a session.
+   *
+   * Subscribes to the modelMessages collection and triggers registered agents
+   * when new complete user messages appear.
+   *
+   * KEY INSIGHT: TanStack DB's subscribeChanges() by default only fires for
+   * changes that occur AFTER subscription (not existing data). Since we call
+   * this AFTER preload completes, historical messages won't trigger agents.
+   * No manual tracking of "preloaded message IDs" is needed.
+   */
+  private setupReactiveAgentTrigger(sessionId: string): void {
+    const state = this.sessionStates.get(sessionId)
+    if (!state) return
+
+    const stream = this.streams.get(sessionId)
+    if (!stream) return
+
+    // Subscribe to changes in the modelMessages collection
+    // By default, subscribeChanges() only fires for NEW changes (after subscription)
+    // Historical messages that were loaded during preload() won't trigger this
+    const subscription = state.modelMessages.subscribeChanges((changes) => {
+      for (const change of changes) {
+        // Only trigger for inserts (new messages)
+        if (change.type !== 'insert') continue
+
+        const message = change.value
+        if (!message) continue
+
+        // Only trigger for user messages (not assistant responses)
+        if (message.role !== 'user') continue
+
+        // Get message history and notify registered agents
+        this.getMessageHistory(sessionId)
+          .then((history) => {
+            this.notifyRegisteredAgents(stream, sessionId, 'user-messages', history)
+          })
+          .catch((err) => {
+            console.error(
+              `[Protocol] Failed to get message history for agent trigger:`,
+              err
+            )
+          })
+      }
+    })
+
+    // Store subscription handle for cleanup
+    state.changeSubscription = subscription
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -767,13 +863,27 @@ export class AIDBSessionProtocol {
   /**
    * Get message history for a session.
    *
-   * This reads the stream and materializes messages.
+   * Reads from the materialized modelMessages collection which contains
+   * all complete messages formatted for LLM consumption.
+   *
+   * @param sessionId - The session ID
+   * @returns Array of messages in { role, content } format
    */
   async getMessageHistory(
-    _sessionId: string
+    sessionId: string
   ): Promise<Array<{ role: string; content: string }>> {
-    // TODO: Read from stream and materialize messages
-    // For now, return empty array - client should pass history
-    return []
+    const state = this.sessionStates.get(sessionId)
+
+    if (!state || !state.isReady) {
+      console.warn(`[Protocol] Session ${sessionId} not ready for message history`)
+      return []
+    }
+
+    // Read from the modelMessages collection
+    // Note: toArray is a getter (property), not a method
+    return state.modelMessages.toArray.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }))
   }
 }

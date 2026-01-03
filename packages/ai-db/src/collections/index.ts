@@ -60,3 +60,10 @@ export {
   createEmptyStats,
   type SessionStatsCollectionOptions,
 } from './session-stats'
+
+// Model messages collection (for LLM invocation)
+export {
+  createModelMessagesCollection,
+  type ModelMessage,
+  type ModelMessagesCollectionOptions,
+} from './model-messages'

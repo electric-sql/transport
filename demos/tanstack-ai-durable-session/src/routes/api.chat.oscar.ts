@@ -34,7 +34,7 @@ export const Route = createFileRoute('/api/chat/oscar')({
             ? lastMessage.content
             : ''
 
-          if (!lastContent.trim().toLowerCase().startsWith('@oscar')) {
+          if (!lastContent.toLowerCase().includes('@oscar')) {
             return new Response(null, { status: 204 })
           }
 

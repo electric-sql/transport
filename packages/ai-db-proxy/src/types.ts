@@ -3,6 +3,8 @@
  */
 
 import { z } from 'zod'
+import type { SessionDB, MessageRow, ModelMessage } from '@electric-sql/ai-db'
+import type { Collection } from '@tanstack/db'
 
 // ============================================================================
 // Stream Row Types
@@ -225,6 +227,41 @@ export interface SessionState {
   lastActivityAt: string
   agents: AgentSpec[]
   activeGenerations: string[]
+}
+
+/**
+ * Extended session state for the proxy.
+ *
+ * Includes the SessionDB and derived collections for message materialization.
+ */
+export interface ProxySessionState extends SessionState {
+  /**
+   * The SessionDB instance syncing from the session's durable stream.
+   * Used for materializing message history.
+   */
+  sessionDB: SessionDB
+
+  /**
+   * Materialized messages collection (from the messages pipeline).
+   */
+  messages: Collection<MessageRow>
+
+  /**
+   * LLM-ready messages collection (filtered, formatted).
+   */
+  modelMessages: Collection<ModelMessage>
+
+  /**
+   * Subscription handle for reactive agent triggering.
+   * Used for cleanup on session deletion.
+   */
+  changeSubscription: { unsubscribe: () => void } | null
+
+  /**
+   * Whether the session is ready for message history reads.
+   * True after SessionDB preload completes.
+   */
+  isReady: boolean
 }
 
 // ============================================================================

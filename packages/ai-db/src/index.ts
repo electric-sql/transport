@@ -165,6 +165,11 @@ export {
   computeSessionStats,
   createEmptyStats,
   type SessionStatsCollectionOptions,
+
+  // Model messages collection (for LLM invocation)
+  createModelMessagesCollection,
+  type ModelMessage,
+  type ModelMessagesCollectionOptions,
 } from './collections'
 
 // ============================================================================

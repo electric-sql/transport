@@ -18,7 +18,6 @@ import {
  * 2. Generates messageId if not provided
  * 3. Writes user message chunks to the stream
  * 4. Optionally invokes an inline agent
- * 5. Notifies registered agents
  */
 export async function handleSendMessage(
   c: Context,
@@ -62,22 +61,12 @@ export async function handleSendMessage(
       body.txid
     )
 
-    // Build message history for agent invocation
-    // In a full implementation, we'd read from the stream
-    const messageHistory = [
-      {
-        role: body.role ?? 'user',
-        content: body.content,
-      },
-    ]
-
-    // Invoke agents in the background.
-    // Errors are written to the stream via writeChunk({ type: 'error', ... })
-    // inside invokeAgent, so clients will see them via sync.
+    // For inline agent invocation, get the full message history
+    // (Reactive triggering via modelMessages handles registered agents)
     if (body.agent) {
+      const messageHistory = await protocol.getMessageHistory(sessionId)
       protocol.invokeAgent(stream, sessionId, body.agent, messageHistory)
     }
-    protocol.notifyRegisteredAgents(stream, sessionId, 'user-messages', messageHistory)
 
     const response: SendMessageResponse = { messageId }
     return c.json(response, 200)

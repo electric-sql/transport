@@ -1339,6 +1339,9 @@ importers:
       '@electric-sql/durable-session':
         specifier: workspace:*
         version: link:../ai-db
+      '@tanstack/db':
+        specifier: workspace:*
+        version: link:../../../../TanStack/db/packages/db
       hono:
         specifier: ^4.4.0
         version: 4.10.7
