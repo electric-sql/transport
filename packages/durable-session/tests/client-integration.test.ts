@@ -146,9 +146,9 @@ describe('DurableChatClient', () => {
       expect(typeof client.collections.toolResults.size).toBe('number')
     })
 
-    it('should expose approvals collection', () => {
-      expect(client.collections.approvals).toBeDefined()
-      expect(typeof client.collections.approvals.size).toBe('number')
+    it('should expose pendingApprovals collection', () => {
+      expect(client.collections.pendingApprovals).toBeDefined()
+      expect(typeof client.collections.pendingApprovals.size).toBe('number')
     })
 
     it('should expose sessionMeta collection', () => {
