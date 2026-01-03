@@ -88,5 +88,48 @@ export function createSessionRoutes(protocol: AIDBSessionProtocol) {
     }
   })
 
+  /**
+   * POST /v1/sessions/:sessionId/reset
+   *
+   * Reset a session - clears all messages and state.
+   * Connected clients will see their collections truncated.
+   * Users remain connected but see an empty session.
+   *
+   * Body (optional): { clearPresence?: boolean }
+   */
+  app.post('/:sessionId/reset', async (c) => {
+    const sessionId = c.req.param('sessionId')
+
+    try {
+      let clearPresence = false
+      try {
+        const body = await c.req.json()
+        clearPresence = body?.clearPresence === true
+      } catch {
+        // No body or invalid JSON - use defaults
+      }
+
+      await protocol.resetSession(sessionId, clearPresence)
+
+      return c.json({
+        success: true,
+        sessionId,
+        message: 'Session reset. All connected clients will clear their state.',
+      })
+    } catch (error) {
+      console.error('Failed to reset session:', error)
+
+      // Check if session not found
+      if ((error as Error).message.includes('not found')) {
+        return c.json({ error: 'Session not found' }, 404)
+      }
+
+      return c.json(
+        { error: 'Failed to reset session', details: (error as Error).message },
+        500
+      )
+    }
+  })
+
   return app
 }

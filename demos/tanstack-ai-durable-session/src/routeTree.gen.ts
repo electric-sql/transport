@@ -9,48 +9,101 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiChatRouteImport } from './routes/api.chat'
+import { Route as ChatSessionIdUsernameRouteImport } from './routes/chat.$sessionId.$username'
+import { Route as ApiChatOscarRouteImport } from './routes/api.chat.oscar'
+import { Route as ApiChatKermitRouteImport } from './routes/api.chat.kermit'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiChatRoute = ApiChatRouteImport.update({
-  id: '/api/chat',
-  path: '/api/chat',
+const ChatSessionIdUsernameRoute = ChatSessionIdUsernameRouteImport.update({
+  id: '/chat/$sessionId/$username',
+  path: '/chat/$sessionId/$username',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiChatOscarRoute = ApiChatOscarRouteImport.update({
+  id: '/api/chat/oscar',
+  path: '/api/chat/oscar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiChatKermitRoute = ApiChatKermitRouteImport.update({
+  id: '/api/chat/kermit',
+  path: '/api/chat/kermit',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/api/chat': typeof ApiChatRoute
+  '/login': typeof LoginRoute
+  '/api/chat/kermit': typeof ApiChatKermitRoute
+  '/api/chat/oscar': typeof ApiChatOscarRoute
+  '/chat/$sessionId/$username': typeof ChatSessionIdUsernameRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/api/chat': typeof ApiChatRoute
+  '/login': typeof LoginRoute
+  '/api/chat/kermit': typeof ApiChatKermitRoute
+  '/api/chat/oscar': typeof ApiChatOscarRoute
+  '/chat/$sessionId/$username': typeof ChatSessionIdUsernameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/api/chat': typeof ApiChatRoute
+  '/login': typeof LoginRoute
+  '/api/chat/kermit': typeof ApiChatKermitRoute
+  '/api/chat/oscar': typeof ApiChatOscarRoute
+  '/chat/$sessionId/$username': typeof ChatSessionIdUsernameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/chat'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/api/chat/kermit'
+    | '/api/chat/oscar'
+    | '/chat/$sessionId/$username'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/chat'
-  id: '__root__' | '/' | '/api/chat'
+  to:
+    | '/'
+    | '/login'
+    | '/api/chat/kermit'
+    | '/api/chat/oscar'
+    | '/chat/$sessionId/$username'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/api/chat/kermit'
+    | '/api/chat/oscar'
+    | '/chat/$sessionId/$username'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ApiChatRoute: typeof ApiChatRoute
+  LoginRoute: typeof LoginRoute
+  ApiChatKermitRoute: typeof ApiChatKermitRoute
+  ApiChatOscarRoute: typeof ApiChatOscarRoute
+  ChatSessionIdUsernameRoute: typeof ChatSessionIdUsernameRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -58,11 +111,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/chat': {
-      id: '/api/chat'
-      path: '/api/chat'
-      fullPath: '/api/chat'
-      preLoaderRoute: typeof ApiChatRouteImport
+    '/chat/$sessionId/$username': {
+      id: '/chat/$sessionId/$username'
+      path: '/chat/$sessionId/$username'
+      fullPath: '/chat/$sessionId/$username'
+      preLoaderRoute: typeof ChatSessionIdUsernameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/chat/oscar': {
+      id: '/api/chat/oscar'
+      path: '/api/chat/oscar'
+      fullPath: '/api/chat/oscar'
+      preLoaderRoute: typeof ApiChatOscarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/chat/kermit': {
+      id: '/api/chat/kermit'
+      path: '/api/chat/kermit'
+      fullPath: '/api/chat/kermit'
+      preLoaderRoute: typeof ApiChatKermitRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -70,7 +137,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ApiChatRoute: ApiChatRoute,
+  LoginRoute: LoginRoute,
+  ApiChatKermitRoute: ApiChatKermitRoute,
+  ApiChatOscarRoute: ApiChatOscarRoute,
+  ChatSessionIdUsernameRoute: ChatSessionIdUsernameRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

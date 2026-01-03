@@ -63,6 +63,8 @@ export {
   type ToolResultRow,
   type ApprovalStatus,
   type ApprovalRow,
+  type PresenceRow,
+  type AgentRow,
   type ConnectionStatus,
   type SessionMetaRow,
   type SessionStatsRow,

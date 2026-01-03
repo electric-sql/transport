@@ -62,14 +62,16 @@ export function useDurableChat<
   const clientRef = useRef<{ client: DurableChatClient<TTools>; key: string } | null>(null)
   const key = `${clientOptions.sessionId}:${clientOptions.proxyUrl}`
 
-  // Create or recreate client when key changes
+  // Create or recreate client when key changes or client was disposed
+  // The isDisposed check handles React Strict Mode: cleanup disposes the client,
+  // so the next render must create a fresh one with a new AbortController.
   if (providedClient) {
     // Use provided client (for testing)
     if (!clientRef.current || clientRef.current.client !== providedClient) {
       clientRef.current = { client: providedClient, key: 'provided' }
     }
-  } else if (!clientRef.current || clientRef.current.key !== key) {
-    // Dispose old client if exists
+  } else if (!clientRef.current || clientRef.current.key !== key || clientRef.current.client.isDisposed) {
+    // Dispose old client if exists (may already be disposed, which is fine)
     clientRef.current?.client.dispose()
     // Create new client synchronously
     clientRef.current = {
@@ -121,7 +123,7 @@ export function useDurableChat<
         })
     }
 
-    // Cleanup: unsubscribe (disposal happens on key change or unmount via ref logic)
+    // Cleanup: unsubscribe and dispose (disposal is idempotent)
     return () => {
       unsubscribes.forEach((u) => u.unsubscribe())
       // Only dispose if this is not a provided client

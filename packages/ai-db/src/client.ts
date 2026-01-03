@@ -88,18 +88,12 @@ interface MessageActionInput {
  * ```
  */
 
-// Debug: instance counter for tracking client lifecycle
-let clientInstanceCounter = 0
-
 export class DurableChatClient<
   TTools extends ReadonlyArray<AnyClientTool> = AnyClientTool[],
 > {
   readonly sessionId: string
   readonly actorId: string
   readonly actorType: ActorType
-
-  // Debug: unique instance ID for logging
-  private readonly _instanceId: number
 
   private readonly options: DurableChatClientOptions<TTools>
 
@@ -114,6 +108,7 @@ export class DurableChatClient<
 
   private _isConnected = false
   private _isPaused = false
+  private _isDisposed = false
   private _error: Error | undefined
 
   // AbortController created at construction time to pass signal to stream-db.
@@ -133,7 +128,6 @@ export class DurableChatClient<
   // ═══════════════════════════════════════════════════════════════════════
 
   constructor(options: DurableChatClientOptions<TTools>) {
-    this._instanceId = ++clientInstanceCounter
     this.options = options
     this.sessionId = options.sessionId
     this.actorId = options.actorId ?? crypto.randomUUID()
@@ -277,6 +271,13 @@ export class DurableChatClient<
    */
   get error(): Error | undefined {
     return this._error
+  }
+
+  /**
+   * Check if the client has been disposed.
+   */
+  get isDisposed(): boolean {
+    return this._isDisposed
   }
 
   /**
@@ -806,6 +807,8 @@ export class DurableChatClient<
    * TanStack DB will GC collections automatically when they have no subscribers.
    */
   dispose(): void {
+    if (this._isDisposed) return
+    this._isDisposed = true
     this.disconnect()
   }
 
@@ -815,13 +818,17 @@ export class DurableChatClient<
 
   /**
    * Convert MessageRow to UIMessage.
+   *
+   * Includes actorId for avatar display (agent ID for assistant messages,
+   * user ID for user messages).
    */
-  private messageRowToUIMessage(row: MessageRow): UIMessage {
+  private messageRowToUIMessage(row: MessageRow): UIMessage & { actorId: string } {
     return {
       id: row.id,
       role: row.role as 'user' | 'assistant',
       parts: row.parts,
       createdAt: row.createdAt,
+      actorId: row.actorId,
     }
   }
 

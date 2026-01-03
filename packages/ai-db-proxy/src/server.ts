@@ -9,6 +9,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { AIDBSessionProtocol } from './protocol'
 import {
+  createAuthRoutes,
   createSessionRoutes,
   createMessageRoutes,
   createAgentRoutes,
@@ -94,6 +95,9 @@ export function createServer(options: AIDBProxyServerOptions) {
   // Session management
   v1.route('/sessions', createSessionRoutes(protocol))
 
+  // Auth (login/logout - nested under sessions)
+  v1.route('/sessions', createAuthRoutes(protocol))
+
   // Messages (nested under sessions)
   v1.route('/sessions', createMessageRoutes(protocol))
 
@@ -130,6 +134,7 @@ export function createServer(options: AIDBProxyServerOptions) {
         fork: '/v1/sessions/:sessionId/fork',
         stop: '/v1/sessions/:sessionId/stop',
         regenerate: '/v1/sessions/:sessionId/regenerate',
+        reset: '/v1/sessions/:sessionId/reset',
       },
     })
   })

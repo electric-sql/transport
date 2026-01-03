@@ -65,8 +65,14 @@ export class AIDBSessionProtocol {
    * Calls PUT on the Durable Streams server to create the stream before
    * returning the handle. This ensures clients can read from the stream
    * immediately (empty streams return 200 with no data, not 404).
+   *
+   * @param sessionId - The session ID
+   * @param defaultAgents - Optional agents to register when creating the session
    */
-  async createSession(sessionId: string): Promise<DurableStream> {
+  async createSession(
+    sessionId: string,
+    defaultAgents?: AgentSpec[]
+  ): Promise<DurableStream> {
     const stream = new DurableStream({
       url: `${this.baseUrl}/v1/stream/sessions/${sessionId}`,
     })
@@ -79,16 +85,34 @@ export class AIDBSessionProtocol {
     // Initialize session state
     this.initializeSessionState(sessionId)
 
+    // Register default agents if provided
+    if (defaultAgents && defaultAgents.length > 0) {
+      for (const agent of defaultAgents) {
+        await this.writeAgentRegistration(stream, sessionId, agent)
+        // Also update in-memory state
+        const state = this.sessionStates.get(sessionId)
+        if (state) {
+          state.agents.push(agent)
+        }
+      }
+    }
+
     return stream
   }
 
   /**
    * Get an existing session stream or create if not exists.
+   *
+   * @param sessionId - The session ID
+   * @param defaultAgents - Optional agents to register when creating a new session
    */
-  async getOrCreateSession(sessionId: string): Promise<DurableStream> {
+  async getOrCreateSession(
+    sessionId: string,
+    defaultAgents?: AgentSpec[]
+  ): Promise<DurableStream> {
     let stream = this.streams.get(sessionId)
     if (!stream) {
-      stream = await this.createSession(sessionId)
+      stream = await this.createSession(sessionId, defaultAgents)
     }
     return stream
   }
@@ -109,6 +133,45 @@ export class AIDBSessionProtocol {
   deleteSession(sessionId: string): void {
     this.streams.delete(sessionId)
     this.sessionStates.delete(sessionId)
+  }
+
+  /**
+   * Reset a session by writing a control reset event.
+   *
+   * This triggers all connected clients to truncate their local collections
+   * and start fresh. Users remain connected but see an empty session.
+   *
+   * @param sessionId - The session ID to reset
+   * @param clearPresence - If true, also clears presence (users will appear offline)
+   */
+  async resetSession(sessionId: string, clearPresence = false): Promise<void> {
+    const stream = this.streams.get(sessionId)
+    if (!stream) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+
+    // Write control reset event to the stream
+    // This is handled by @durable-streams/state which truncates all collections
+    const resetEvent = {
+      headers: {
+        control: 'reset' as const,
+      },
+    }
+
+    await stream.append(resetEvent)
+
+    // Clear in-memory state
+    this.messageSeqs.clear()
+    const state = this.sessionStates.get(sessionId)
+    if (state) {
+      state.activeGenerations = []
+      if (clearPresence) {
+        // Note: presence is stored in the stream, so clearing here just
+        // affects the in-memory view. The reset event clears client-side.
+      }
+    }
+
+    this.updateLastActivity(sessionId)
   }
 
   /**

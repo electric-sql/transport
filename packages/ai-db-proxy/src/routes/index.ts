@@ -2,6 +2,7 @@
  * Route exports for @electric-sql/durable-session-proxy
  */
 
+export { createAuthRoutes } from './auth'
 export { createSessionRoutes } from './sessions'
 export { createMessageRoutes } from './messages'
 export { createAgentRoutes } from './agents'
