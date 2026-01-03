@@ -1,0 +1,15 @@
+{
+  "type": "chunk",
+  "key": "cli-demo-001:0",
+  "value": {
+    "messageId": "cli-demo-001",
+    "actorId": "CLI User",
+    "role": "user",
+    "chunk": "{\"type\":\"whole-message\",\"message\":{\"id\":\"cli-demo-001\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Hello from the command line!\"}],\"createdAt\":\"2025-01-03T12:00:00.000Z\"}}",
+    "seq": 0,
+    "createdAt": "2025-01-03T12:00:00.000Z"
+  },
+  "headers": {
+    "operation": "insert"
+  }
+}
