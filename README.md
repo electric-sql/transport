@@ -14,7 +14,7 @@
 
 # Durable Transport &amp; Durable Session
 
-[Durable Streams](https://github.com/durable-streams/durable-streams) based Durable Transport and Durable Session implementations for [TanStack AI](https://tanstack.com/ai) and the [Vercel AI SDK](https://ai-sdk.dev).
+[Durable Streams](https://github.com/durable-streams/durable-streams) based durable transport and session implementations for [TanStack AI](https://tanstack.com/ai) and the [Vercel AI SDK](https://ai-sdk.dev).
 
 See the [Durable Sessions — the key pattern for collaborative AI](https://electric-sql.com/blog/2026/01/05/durable-sessions-for-collaborative-ai) blog post for more information.
 
