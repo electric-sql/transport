@@ -1,13 +1,13 @@
 # AI SDK, Next.js, and OpenAI Chat Example
 
-This example shows how to use the default [Vercel AI SDK](https://ai-sdk.dev/docs) with [Next.js](https://nextjs.org/) and [OpenAI](https://openai.com) streaming chat demo with the Electric durable streams transport.
+This example shows how to use the [Vercel AI SDK](https://ai-sdk.dev/docs) with [Next.js](https://nextjs.org/) and [OpenAI](https://openai.com) streaming chat demo with the Durable Streams transport.
 
 The key code is in app/page.tsx:
 
 ```ts
 import { useEffect } from 'react'
 import { useChat } from '@ai-sdk/react'
-import { durableTransport } from '@electric-sql/ai-transport'
+import { durableTransport } from '@durable-streams/ai-transport'
 
 const { durableSession, initialMessages } = durableTransport(
   `demo`,

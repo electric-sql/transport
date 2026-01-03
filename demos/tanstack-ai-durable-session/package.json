@@ -9,7 +9,7 @@
     "test": "exit 0"
   },
   "dependencies": {
-    "@electric-sql/react-ai-db": "workspace:*",
+    "@electric-sql/react-durable-session": "workspace:*",
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/ai": "workspace:*",
     "@tanstack/ai-openai": "workspace:*",

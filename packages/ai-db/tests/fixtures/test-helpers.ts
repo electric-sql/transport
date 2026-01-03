@@ -1,5 +1,5 @@
 /**
- * Test utilities for @electric-sql/ai-db.
+ * Test utilities for @electric-sql/durable-session.
  *
  * Provides mock stream controllers and fixtures for testing the live query pipeline.
  */

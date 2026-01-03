@@ -1,5 +1,5 @@
 /**
- * Collection exports for @electric-sql/ai-db
+ * Collection exports for @electric-sql/durable-session
  *
  * All collections follow the two-stage pipeline pattern:
  * 1. Aggregate stage: groupBy + collect to gather rows

@@ -1,5 +1,5 @@
 /**
- * @electric-sql/ai-db-proxy
+ * @electric-sql/durable-session-proxy
  *
  * Backend proxy for AI DB - Wrapper Protocol implementation for Durable Streams.
  *
@@ -12,7 +12,7 @@
  *
  * @example Node.js server
  * ```typescript
- * import { createServer } from '@electric-sql/ai-db-proxy'
+ * import { createServer } from '@electric-sql/durable-session-proxy'
  * import { serve } from '@hono/node-server'
  *
  * const { app } = createServer({
@@ -25,7 +25,7 @@
  *
  * @example Cloudflare Workers
  * ```typescript
- * import { createServer } from '@electric-sql/ai-db-proxy'
+ * import { createServer } from '@electric-sql/durable-session-proxy'
  *
  * const { app } = createServer({
  *   baseUrl: 'https://streams.example.com',

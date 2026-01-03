@@ -1050,7 +1050,7 @@ importers:
 
   demos/tanstack-ai-durable-session:
     dependencies:
-      '@electric-sql/react-ai-db':
+      '@electric-sql/react-durable-session':
         specifier: workspace:*
         version: link:../../packages/react-ai-db
       '@tailwindcss/vite':
@@ -1336,7 +1336,7 @@ importers:
       '@durable-streams/client':
         specifier: workspace:*
         version: link:../../../../durable-streams/durable-streams/packages/client
-      '@electric-sql/ai-db':
+      '@electric-sql/durable-session':
         specifier: workspace:*
         version: link:../ai-db
       hono:
@@ -1423,7 +1423,7 @@ importers:
 
   packages/react-ai-db:
     dependencies:
-      '@electric-sql/ai-db':
+      '@electric-sql/durable-session':
         specifier: workspace:*
         version: link:../ai-db
       '@tanstack/react-db':

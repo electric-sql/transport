@@ -64,7 +64,7 @@ interface MessageActionInput {
  *
  * @example
  * ```typescript
- * import { DurableChatClient } from '@electric-sql/ai-db'
+ * import { DurableChatClient } from '@electric-sql/durable-session'
  *
  * const client = new DurableChatClient({
  *   sessionId: 'my-session',

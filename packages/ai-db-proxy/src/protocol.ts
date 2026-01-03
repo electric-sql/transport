@@ -10,7 +10,7 @@
  */
 
 import { DurableStream } from '@durable-streams/client'
-import { sessionStateSchema } from '@electric-sql/ai-db'
+import { sessionStateSchema } from '@electric-sql/durable-session'
 import type { StreamChunk, AgentSpec, SessionState, AIDBProtocolOptions } from './types'
 
 // Map role to the role type expected by the schema

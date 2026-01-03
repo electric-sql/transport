@@ -1,5 +1,5 @@
 {
-  "name": "@electric-sql/ai-db",
+  "name": "@electric-sql/durable-session",
   "version": "0.1.0",
   "description": "Framework-agnostic durable chat client backed by TanStack DB and Durable Streams.",
   "type": "module",

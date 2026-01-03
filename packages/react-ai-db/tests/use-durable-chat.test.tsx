@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { DurableChatClient } from '@electric-sql/ai-db'
+import { DurableChatClient } from '@electric-sql/durable-session'
 import { useDurableChat } from '../src/use-durable-chat'
 import type { UIMessage } from '@tanstack/ai'
 
