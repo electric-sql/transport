@@ -1,5 +1,5 @@
 /**
- * Route exports for @electric-sql/ai-db-proxy
+ * Route exports for @electric-sql/durable-session-proxy
  */
 
 export { createSessionRoutes } from './sessions'

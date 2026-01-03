@@ -1,22 +1,9 @@
 import cors from 'cors'
 import express from 'express'
-import { Readable } from 'stream'
-import type { ReadableStream as WebReadableStream } from 'stream/web'
 
 import { proxyPort, proxyUrl } from './config'
-import {
-  handleApiRequest,
-  handleDataStreamRequest,
-  handleControlStreamRequest,
-} from './handlers'
-import {
-  apiRequestParamsSchema,
-  apiRequestHeadersSchema,
-  streamRequestSchema,
-} from './schema'
-
-import { applyMigrations, pool } from './db'
-await applyMigrations()
+import { handleApiRequest } from './handlers'
+import { apiRequestParamsSchema, apiRequestHeadersSchema } from './schema'
 
 const app = express()
 app.use(cors())
@@ -90,54 +77,6 @@ app.post(`/api/:sessionId/:requestId`, async (req, res) => {
   res.json(responseData)
 })
 
-// Helper to pipe a fetch response to Express response
-function pipeResponse(fetchResponse: Response, res: express.Response): void {
-  res.status(fetchResponse.status)
-
-  const headers = new Headers(fetchResponse.headers)
-  headers.delete(`content-encoding`)
-  headers.delete(`content-length`)
-  headers.forEach((value, key) => {
-    res.setHeader(key, value)
-  })
-
-  if (fetchResponse.body) {
-    Readable.fromWeb(fetchResponse.body as WebReadableStream).pipe(res)
-  } else {
-    res.end()
-  }
-}
-
-// Proxy requests to Electric for data stream.
-app.get(`/stream/data`, async (req, res) => {
-  const result = streamRequestSchema.safeParse(req.query)
-
-  if (!result.success) {
-    return res.status(400).json({
-      error: `Invalid`,
-      details: result.error.errors,
-    })
-  }
-
-  const response = await handleDataStreamRequest(result.data)
-  pipeResponse(response, res)
-})
-
-// Proxy requests to Electric for control stream.
-app.get(`/stream/control`, async (req, res) => {
-  const result = streamRequestSchema.safeParse(req.query)
-
-  if (!result.success) {
-    return res.status(400).json({
-      error: `Invalid`,
-      details: result.error.errors,
-    })
-  }
-
-  const response = await handleControlStreamRequest(result.data)
-  pipeResponse(response, res)
-})
-
 const server = app.listen(proxyPort, () => {
   console.log(`Server running on ${proxyUrl}`)
 })
@@ -146,8 +85,6 @@ const gracefulShutdown = (signal: string) => {
   console.log(`${signal} received, closing server gracefully...`)
 
   server.close(() => {
-    pool.end()
-
     process.exit(0)
   })
 

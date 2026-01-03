@@ -38,7 +38,7 @@ export interface AIDBProxyServerOptions extends AIDBProtocolOptions {
  *
  * @example
  * ```typescript
- * import { createServer } from '@electric-sql/ai-db-proxy'
+ * import { createServer } from '@electric-sql/durable-session-proxy'
  *
  * const app = createServer({
  *   baseUrl: 'http://localhost:3000',
@@ -117,7 +117,7 @@ export function createServer(options: AIDBProxyServerOptions) {
   // Root info
   app.get('/', (c) => {
     return c.json({
-      name: '@electric-sql/ai-db-proxy',
+      name: '@electric-sql/durable-session-proxy',
       version: '0.1.0',
       endpoints: {
         health: '/health',

@@ -1,5 +1,5 @@
 /**
- * @electric-sql/react-ai-db
+ * @electric-sql/react-durable-session
  *
  * React bindings for durable chat client backed by TanStack DB and Durable Streams.
  *
@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * import { useDurableChat } from '@electric-sql/react-ai-db'
+ * import { useDurableChat } from '@electric-sql/react-durable-session'
  *
  * function Chat() {
  *   const { messages, sendMessage, isLoading } = useDurableChat({
@@ -79,4 +79,4 @@ export {
   extractTextContent,
   isUserMessage,
   isAssistantMessage,
-} from '@electric-sql/ai-db'
+} from '@electric-sql/durable-session'

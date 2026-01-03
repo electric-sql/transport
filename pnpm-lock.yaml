@@ -1050,7 +1050,7 @@ importers:
 
   demos/tanstack-ai-durable-session:
     dependencies:
-      '@electric-sql/react-ai-db':
+      '@electric-sql/react-durable-session':
         specifier: workspace:*
         version: link:../../packages/react-ai-db
       '@tailwindcss/vite':
@@ -1150,7 +1150,7 @@ importers:
 
   demos/tanstack-ai-durable-transport:
     dependencies:
-      '@electric-sql/tanstack-ai-transport':
+      '@durable-streams/tanstack-ai-transport':
         specifier: workspace:*
         version: link:../../packages/tanstack-ai-transport
       '@tailwindcss/vite':
@@ -1256,7 +1256,7 @@ importers:
       '@ai-sdk/react':
         specifier: 3.0.0-beta.127
         version: 3.0.0-beta.127(arktype@2.1.28)(react@19.2.1)(zod@4.1.13)
-      '@electric-sql/ai-transport':
+      '@durable-streams/ai-transport':
         specifier: workspace:*
         version: link:../../packages/ai-transport
       ai:
@@ -1336,7 +1336,7 @@ importers:
       '@durable-streams/client':
         specifier: workspace:*
         version: link:../../../../durable-streams/durable-streams/packages/client
-      '@electric-sql/ai-db':
+      '@electric-sql/durable-session':
         specifier: workspace:*
         version: link:../ai-db
       hono:
@@ -1364,7 +1364,7 @@ importers:
 
   packages/ai-transport:
     dependencies:
-      '@electric-sql/transport':
+      '@durable-streams/transport':
         specifier: workspace:*
         version: link:../transport
     devDependencies:
@@ -1383,28 +1383,19 @@ importers:
 
   packages/proxy:
     dependencies:
-      '@electric-sql/client':
-        specifier: ^1.1.2
-        version: 1.2.0
+      '@durable-streams/client':
+        specifier: workspace:*
+        version: link:../../../../durable-streams/durable-streams/packages/client
       cors:
         specifier: ^2.8.5
         version: 2.8.5
       express:
         specifier: ^5.1.0
         version: 5.2.1
-      pg:
-        specifier: ^8.16.3
-        version: 8.16.3
       zod:
         specifier: ^4.1.12
         version: 4.1.13
     devDependencies:
-      '@electric-sql/pglite':
-        specifier: ^0.3.14
-        version: 0.3.14
-      '@electric-sql/pglite-socket':
-        specifier: ^0.0.19
-        version: 0.0.19(@electric-sql/pglite@0.3.14)
       '@types/cors':
         specifier: ^2.8.19
         version: 2.8.19
@@ -1414,9 +1405,6 @@ importers:
       '@types/node':
         specifier: ^24.10.0
         version: 24.10.1
-      '@types/pg':
-        specifier: ^8.15.6
-        version: 8.15.6
       '@vitest/ui':
         specifier: ^2.1.8
         version: 2.1.9(vitest@2.1.9)
@@ -1435,7 +1423,7 @@ importers:
 
   packages/react-ai-db:
     dependencies:
-      '@electric-sql/ai-db':
+      '@electric-sql/durable-session':
         specifier: workspace:*
         version: link:../ai-db
       '@tanstack/react-db':
@@ -1475,7 +1463,7 @@ importers:
 
   packages/tanstack-ai-transport:
     dependencies:
-      '@electric-sql/transport':
+      '@durable-streams/transport':
         specifier: workspace:*
         version: link:../transport
     devDependencies:
@@ -1503,9 +1491,9 @@ importers:
 
   packages/transport:
     dependencies:
-      '@electric-sql/client':
-        specifier: ^1.1.2
-        version: 1.2.0
+      '@durable-streams/client':
+        specifier: workspace:*
+        version: link:../../../../durable-streams/durable-streams/packages/client
       uuid:
         specifier: ^13.0.0
         version: 13.0.0
@@ -1860,12 +1848,6 @@ packages:
 
   '@electric-sql/client@1.2.0':
     resolution: {integrity: sha512-K/MEjti3UF4aPKJJqO6Tp4f5noqc2/3icU1NPdpKfQaHwbzGtEX2aJmL2vxTEUJbfyrISkPKbOPnrz/lAvw1Vg==}
-
-  '@electric-sql/pglite-socket@0.0.19':
-    resolution: {integrity: sha512-9Uq0aXJyfeQMQCk9OiX3dfjdKCKurjGPkhHemDo+sA5QeYPuH48Bxfue4sfA+dBXZGe9cUCjwrnZ351E3wPPIA==}
-    hasBin: true
-    peerDependencies:
-      '@electric-sql/pglite': 0.3.14
 
   '@electric-sql/pglite@0.3.14':
     resolution: {integrity: sha512-3DB258dhqdsArOI1fIt7cb9RpUOgcDg5hXWVgVHAeqVQ/qxtFy605QKs4gx6mFq3jWsSPqDN8TgSEsqC3OfV9Q==}
@@ -9745,11 +9727,8 @@ snapshots:
     optionalDependencies:
       '@rollup/rollup-darwin-arm64': 4.53.3
 
-  '@electric-sql/pglite-socket@0.0.19(@electric-sql/pglite@0.3.14)':
-    dependencies:
-      '@electric-sql/pglite': 0.3.14
-
-  '@electric-sql/pglite@0.3.14': {}
+  '@electric-sql/pglite@0.3.14':
+    optional: true
 
   '@emnapi/core@1.7.1':
     dependencies:

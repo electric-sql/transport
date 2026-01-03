@@ -1,7 +1,7 @@
 {
-  "name": "@electric-sql/ai-db-proxy",
+  "name": "@electric-sql/durable-session-proxy",
   "version": "0.1.0",
-  "description": "Backend proxy for AI DB - Wrapper Protocol implementation for Durable Streams.",
+  "description": "Backend proxy for Durable Session AI DB - Wrapper Protocol implementation for Durable Streams.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,7 +25,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@durable-streams/client": "workspace:*",
-    "@electric-sql/ai-db": "workspace:*",
+    "@electric-sql/durable-session": "workspace:*",
     "hono": "^4.4.0",
     "zod": "^4.1.12"
   },

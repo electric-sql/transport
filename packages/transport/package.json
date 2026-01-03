@@ -1,5 +1,5 @@
 {
-  "name": "@electric-sql/transport",
+  "name": "@durable-streams/transport",
   "version": "0.1.0",
   "description": "Durable transport for durable streams.",
   "type": "module",
@@ -23,7 +23,7 @@
   "author": "ElectricSQL",
   "license": "Apache-2.0",
   "dependencies": {
-    "@electric-sql/client": "^1.1.2",
+    "@durable-streams/client": "workspace:*",
     "uuid": "^13.0.0",
     "zod": "^4.1.12"
   },

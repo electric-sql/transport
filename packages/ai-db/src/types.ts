@@ -1,5 +1,5 @@
 /**
- * Core type definitions for @electric-sql/ai-db
+ * Core type definitions for @electric-sql/durable-session
  *
  * Defines the stream protocol types, collection schemas, and API interfaces.
  */

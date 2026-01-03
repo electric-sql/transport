@@ -6,8 +6,8 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { DurableChatClient } from '@electric-sql/ai-db'
-import type { DurableChatClientOptions } from '@electric-sql/ai-db'
+import { DurableChatClient } from '@electric-sql/durable-session'
+import type { DurableChatClientOptions } from '@electric-sql/durable-session'
 import type { UIMessage, AnyClientTool } from '@tanstack/ai'
 import type { UseDurableChatOptions, UseDurableChatReturn } from './types'
 

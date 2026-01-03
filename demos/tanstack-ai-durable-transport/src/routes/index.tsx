@@ -7,7 +7,7 @@ import rehypeSanitize from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import { useChat } from '@tanstack/ai-react'
-import { durableTransport } from '@electric-sql/tanstack-ai-transport'
+import { durableTransport } from '@durable-streams/tanstack-ai-transport'
 import type { UIMessage } from '@tanstack/ai-client'
 import type { StreamChunk } from '@tanstack/ai'
 

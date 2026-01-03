@@ -1,5 +1,5 @@
 /**
- * React-specific types for @electric-sql/react-ai-db
+ * React-specific types for @electric-sql/react-durable-session
  */
 
 import type {
@@ -12,7 +12,7 @@ import type {
   ForkOptions,
   ForkResult,
   AgentSpec,
-} from '@electric-sql/ai-db'
+} from '@electric-sql/durable-session'
 import type { UIMessage, AnyClientTool } from '@tanstack/ai'
 
 /**

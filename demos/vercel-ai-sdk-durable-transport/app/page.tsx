@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { useChat } from '@ai-sdk/react'
-import { durableTransport } from '@electric-sql/ai-transport'
+import { durableTransport } from '@durable-streams/ai-transport'
 import ChatInput from '@/components/chat-input'
 
 const proxyUrl = process.env.NEXT_PUBLIC_PROXY_URL || `http://localhost:4000/api`

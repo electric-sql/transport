@@ -15,7 +15,7 @@ import {
   toUUID,
   type FetchClientOptions,
   type StorageOptions,
-} from '@electric-sql/transport'
+} from '@durable-streams/transport'
 
 // Options for configuring the durable transport behavior.
 export type DurableOptions<UI_MESSAGE extends UIMessage = UIMessage> = {
@@ -275,4 +275,4 @@ export {
   clearPersistedMessages,
   clearSession,
   type StorageOptions,
-} from '@electric-sql/transport'
+} from '@durable-streams/transport'

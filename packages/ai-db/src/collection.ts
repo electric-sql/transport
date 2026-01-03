@@ -72,7 +72,7 @@ type RawSessionDB = StreamDB<typeof sessionStateSchema>
  *
  * @example
  * ```typescript
- * import { createSessionDB } from '@electric-sql/ai-db'
+ * import { createSessionDB } from '@electric-sql/durable-session'
  *
  * // Create stream-db for this session (synchronous)
  * const db = createSessionDB({

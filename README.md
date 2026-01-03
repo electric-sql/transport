@@ -1,26 +1,25 @@
 
-# Electric Transport
+# Durable Streams Transport
 
 Durable stream transport, proxy and AI SDK adapters.
 
 ## Packages
 
-### Durable transport
+### Durable Transport
 
-- `proxy` -- node service that proxies backend API requests via Electric shape streams
-- `transport` -- protocol agnostic transport library with proxy-aware fetch client and storage utilities
+- `transport` -- protocol-agnostic transport library with proxy-aware fetch client and storage utilities
+- `proxy` -- node service that proxies backend API requests via Durable Streams
 
 - `ai-transport` -- Vercel AI SDK adapter
 - `tanstack-ai-transport` -- TanStack AI adapter
 
-### Durable sessions
+### Durable Sessions
 
-Durable sessions use a TanStack DB collection as the data model. The durable stream is the source of truth, with messages materialized via a dervied live query pipeline.
+Durable sessions use a TanStack DB collection as the data model. The durable stream is the source of truth, with messages materialized via a derived live query pipeline.
 
-- `ai-db` -- framework-agnostic client, collections, and materialization
-
-- `react-ai-db` -- React bindings (`useDurableChat` hook)
-- `ai-db-proxy` -- HTTP proxy for session management and agent invocation
+- `@electric-sql/durable-session` -- framework-agnostic client, collections, and materialization
+- `@electric-sql/react-durable-session` -- React bindings (`useDurableChat` hook)
+- `@electric-sql/durable-session-proxy` -- HTTP proxy for session management and agent invocation
 
 ### Seperation of concerns
 
@@ -40,11 +39,11 @@ The `proxy`, `transport` and `ai-db` packages should be protocol and reactivity 
 
 3. the proxy
   - proxies the request to the backend API
-  - writes the response to a shape/stream
+  - writes the response to a Durable Stream as JSON events
   - sends back stream urls to the fetchClient
 
 4. fetchClient
-  - consumes data and control streams
+  - consumes the Durable Stream
   - emits the data stream as a standard response
 
 #### Persistence
@@ -63,24 +62,31 @@ There's no server-side persistence or specific protocol-aware proxy services.
   - looks for headers like `X-Resume-Active-Generation`
   - if present, resumes the active generation when requested
 
-#### Stream protocol
+#### Stream Protocol
 
-Currently implemented on-top of Postgres using Electric shapes.
+The transport layer uses Durable Streams with a single-stream JSON event protocol:
 
-Designed to be easily swappable to the new durable streams protocol via a dual
-`data` and `control` stream pattern, aligned with a `lastReceivedRowId` value
-that can be swapped for the `Stream-Next-Offset` when we have that returned
-from writes to the new dirable streams.
+**Event Types**:
+```typescript
+// Data chunk (wraps raw SSE from upstream API)
+{ type: "data", payload: string }
 
-This allows the data stream to be a pure binary stream, with a control stream of
-transport specific messages handling `done` and `error`s. When the client recieves
-a done or error message, it waits to make sure it's recieves all the preceding data
-before closing the data stream. Thus preventing race conditions across the two streams.
+// Stream completed successfully
+{ type: "done", finishReason: string }
 
-#### Note on IDS
+// Stream error
+{ type: "error", message: string }
+```
 
-We currently use `sessionId` and `requestId` identifiers in the database tables.
-We can move to just a `streamId` when we have this.
+**Stream URL Pattern**:
+```
+{durableStreamsUrl}/stream/{sessionId}/{requestId}
+```
+
+**Resumption**:
+- Client stores stream URL and offset in localStorage
+- On reconnect, resumes from stored offset (or replays from start for page reload)
+- Single offset value (replaces the previous dual-stream handle + offset pattern)
 
 ### Durable Sessions
 
@@ -88,7 +94,7 @@ See `docs/DurableSessions.md` for details.
 
 ## Demos
 
-Standard AI SDK demos adapted to use the Electric Durable transport:
+Standard AI SDK demos adapted to use Durable Streams transport:
 
 - `vercel-ai-sdk-durable-transport` -- Vercel AI SDK + Durable Transport
 - `tanstack-ai-durable-transport` -- TanStack AI + Durable Transport
@@ -101,15 +107,15 @@ Standard TanStack AI demo adapted to use TanStack DB and Durable Session:
 
 ### Transport Demos (Vercel AI SDK, TanStack AI)
 
-These demos use Electric as the durable stream backend:
+These demos use Durable Streams as the backend:
 
 ```sh
 pnpm i
 pnpm build
-pnpm transport-backend:up  # Starts Postgres + Electric on port 3000
+pnpm backend:up  # Starts Durable Streams server on port 3001
 
 # In one terminal
-pnpm dev:transport-proxy
+pnpm dev:proxy
 
 # In another terminal, run the default demo (vercel-ai-sdk-durable-transport)
 pnpm dev:demo
@@ -125,7 +131,7 @@ This demo uses the Durable Streams server:
 ```sh
 pnpm i
 pnpm build
-pnpm session-backend:up  # Starts Durable Streams server on port 3001
+pnpm backend:up  # Starts Durable Streams server on port 3001
 
 # In one terminal
 pnpm dev:session-proxy
@@ -138,9 +144,7 @@ pnpm dev:demo tanstack-ai-durable-session
 
 | Script | Services | Port |
 |--------|----------|------|
-| `pnpm transport-backend:up` | Postgres + Electric | 3000 |
-| `pnpm session-backend:up` | Durable Streams | 3001 |
-| `pnpm backend:up` | All services | 3000, 3001 |
+| `pnpm backend:up` | Durable Streams | 3001 |
 
 ### Demo Ports
 

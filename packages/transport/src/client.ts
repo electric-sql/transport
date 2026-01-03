@@ -67,11 +67,11 @@ function extractForwardHeaders(headers: Headers): Record<string, string> {
 // The client intercepts fetch calls and:
 // 1. Extracts or generates requestId and sessionId from `X-Request-ID` and `X-Session-ID` headers
 // 2. Forwards the request to the proxy which handles the actual API call
-// 3. Returns a streaming response via Electric's shape stream
+// 3. Returns a streaming response via Durable Streams
 //
 // If the request has a `X-Resume-Active-Generation` header then the client tries to lookup
 // an active generation for the `X-Session-ID`. If this exists, then the client resumes using
-// the persisted stream handle and offset.
+// the persisted stream offset.
 //
 // Usage:
 //   const fetch = createFetchClient({ proxyUrl: 'http://localhost:4000/api' })
@@ -137,16 +137,14 @@ export function createFetchClient(options: FetchClientOptions): FetchFn {
     }
 
     const {
-      dataStream,
-      controlStream,
+      streamResponse,
       cleanup,
       sessionId: streamSessionId,
       responseData,
     } = streamResult
 
     const body = await read(
-      dataStream,
-      controlStream,
+      streamResponse,
       cleanup,
       streamSessionId,
       responseData

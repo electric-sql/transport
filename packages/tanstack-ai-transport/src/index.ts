@@ -1,14 +1,14 @@
 /**
- * @electric-sql/tanstack-ai-transport
+ * @durable-streams/tanstack-ai-transport
  *
  * Durable transport adapter for TanStack AI.
  *
  * This package provides resilient, resumable streaming for TanStack AI chat
- * applications using Electric's durable stream infrastructure.
+ * applications using Durable Streams infrastructure.
  *
  * @example
  * ```typescript
- * import { durableTransport } from '@electric-sql/tanstack-ai-transport'
+ * import { durableTransport } from '@durable-streams/tanstack-ai-transport'
  * import { useChat } from '@tanstack/ai-react'
  *
  * const proxyUrl = process.env.NEXT_PUBLIC_PROXY_URL || 'http://localhost:4000/api'
@@ -53,9 +53,10 @@ import {
   resume as resumeStream,
   setPersistedMessages,
   toUUID,
+  streamEventSchema,
   type FetchClientOptions,
   type StorageOptions,
-} from '@electric-sql/transport'
+} from '@durable-streams/transport'
 
 // ============================================================================
 // Types
@@ -181,7 +182,6 @@ export interface DurableOptions {
 
 /**
  * The session configuration object that can be spread into useChat().
- * Mirrors the pattern from @electric-sql/ai-transport for Vercel AI SDK.
  */
 export interface DurableSession {
   /**
@@ -258,7 +258,7 @@ export interface DurableTransportResult {
  * Create a durable transport for TanStack AI.
  *
  * This function sets up resilient, resumable streaming by routing chat requests
- * through the Electric proxy. It provides:
+ * through the Durable Streams proxy. It provides:
  *
  * - **Message persistence**: Saves conversation history to localStorage
  * - **Automatic resumption**: On page reload, resumes active generations
@@ -271,7 +271,7 @@ export interface DurableTransportResult {
  *
  * @example
  * ```typescript
- * import { durableTransport } from '@electric-sql/tanstack-ai-transport'
+ * import { durableTransport } from '@durable-streams/tanstack-ai-transport'
  * import { useChat } from '@tanstack/ai-react'
  *
  * const { durableSession, useDurability, clearSession } =
@@ -360,7 +360,7 @@ export function durableTransport(
         replayFromStart: false,
       })
 
-      const { dataStream, controlStream, cleanup } = streamResult
+      const { streamResponse, cleanup } = streamResult
 
       // Create or reuse the assistant message
       // IMPORTANT: Deep copy parts to avoid mutating shared objects in React state
@@ -381,27 +381,23 @@ export function durableTransport(
         async function* (): AsyncGenerator<StreamChunk> {
           let buffer = ``
 
-          // Subscribe to the data stream
+          // Subscribe to the stream
           const chunks: string[] = []
           let resolveChunk: ((value: string | null) => void) | null = null
           let done = false
 
-          const dataUnsubscribe = dataStream.subscribe((messages) => {
-            for (const msg of messages) {
-              if (`control` in msg.headers) continue
-              const row = (msg as { value: Record<string, unknown> }).value
-              if (row?.data) {
-                chunks.push(row.data as string)
-                resolveChunk?.(row.data as string)
-              }
-            }
-          })
+          const unsubscribe = streamResponse.subscribeJson(async (batch) => {
+            for (const item of batch.items) {
+              // Parse and validate the event
+              const parseResult = streamEventSchema.safeParse(item)
+              if (!parseResult.success) continue
 
-          const controlUnsubscribe = controlStream.subscribe((messages) => {
-            for (const msg of messages) {
-              if (`control` in msg.headers) continue
-              const row = (msg as { value: Record<string, unknown> }).value
-              if (row?.event === `done` || row?.event === `error`) {
+              const event = parseResult.data
+
+              if (event.type === `data`) {
+                chunks.push(event.payload)
+                resolveChunk?.(event.payload)
+              } else if (event.type === `done` || event.type === `error`) {
                 done = true
                 resolveChunk?.(null)
               }
@@ -458,8 +454,7 @@ export function durableTransport(
               }
             }
           } finally {
-            dataUnsubscribe()
-            controlUnsubscribe()
+            unsubscribe()
           }
         }
 
@@ -635,4 +630,4 @@ export {
   getPersistedMessages,
   setPersistedMessages,
   type StorageOptions,
-} from '@electric-sql/transport'
+} from '@durable-streams/transport'

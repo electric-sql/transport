@@ -1,4 +1,4 @@
-import type { Offset } from '@electric-sql/client'
+import type { Offset } from '@durable-streams/client'
 import type { APIResponse } from './schema'
 
 // ============================================================================
@@ -7,13 +7,8 @@ import type { APIResponse } from './schema'
 
 export type ActiveGeneration = {
   data: APIResponse
-  // Shape offsets for resumption
-  dataShapeHandle: string
-  dataShapeOffset: Offset
-  controlShapeHandle: string
-  controlShapeOffset: Offset
-  // Last processed row ID (for verification on resume)
-  lastProcessedRowId: string
+  // Single Durable Streams offset for resumption
+  streamOffset: Offset
 }
 
 type TimestampedActiveGeneration = ActiveGeneration & {
@@ -36,8 +31,8 @@ export type StorageOptions = {
 // Constants
 // ============================================================================
 
-const ACTIVE_GENERATION_PREFIX = `@electric-sql/transport/active-generation`
-const MESSAGES_PREFIX = `@electric-sql/transport/messages`
+const ACTIVE_GENERATION_PREFIX = `@durable-streams/transport/active-generation`
+const MESSAGES_PREFIX = `@durable-streams/transport/messages`
 
 const DEFAULT_ACTIVE_GENERATION_TTL_MS = 60 * 60 * 1000 // 1 hour
 const DEFAULT_MESSAGES_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
@@ -60,19 +55,11 @@ function buildMessagesKey(sessionId: string): string {
 
 function buildActiveGenerationPayload(
   data: APIResponse,
-  dataShapeHandle: string,
-  dataShapeOffset: Offset,
-  controlShapeHandle: string,
-  controlShapeOffset: Offset,
-  lastProcessedRowId: string
+  streamOffset: Offset
 ): TimestampedActiveGeneration {
   return {
     data,
-    dataShapeHandle,
-    dataShapeOffset,
-    controlShapeHandle,
-    controlShapeOffset,
-    lastProcessedRowId,
+    streamOffset,
     timestamp: Date.now(),
   }
 }
@@ -98,15 +85,7 @@ export function getActiveGeneration(
     return null
   }
 
-  const {
-    data,
-    dataShapeHandle,
-    dataShapeOffset,
-    controlShapeHandle,
-    controlShapeOffset,
-    lastProcessedRowId,
-    timestamp,
-  } = value
+  const { data, streamOffset, timestamp } = value
 
   // Check if generation is stale
   if (Date.now() - timestamp > ttlMs) {
@@ -116,36 +95,21 @@ export function getActiveGeneration(
 
   return {
     data,
-    dataShapeHandle,
-    dataShapeOffset,
-    controlShapeHandle,
-    controlShapeOffset,
-    lastProcessedRowId,
+    streamOffset,
   }
 }
 
 export function setActiveGeneration(
   sessionId: string,
   data: APIResponse,
-  dataShapeHandle: string,
-  dataShapeOffset: Offset,
-  controlShapeHandle: string,
-  controlShapeOffset: Offset,
-  lastProcessedRowId: string
+  streamOffset: Offset
 ): void {
   if (typeof localStorage === `undefined`) {
     return
   }
 
   const key = buildActiveGenerationKey(sessionId)
-  const payload = buildActiveGenerationPayload(
-    data,
-    dataShapeHandle,
-    dataShapeOffset,
-    controlShapeHandle,
-    controlShapeOffset,
-    lastProcessedRowId
-  )
+  const payload = buildActiveGenerationPayload(data, streamOffset)
 
   localStorage.setItem(key, JSON.stringify(payload))
 }

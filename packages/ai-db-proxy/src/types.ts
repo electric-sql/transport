@@ -1,5 +1,5 @@
 /**
- * Type definitions for @electric-sql/ai-db-proxy
+ * Type definitions for @electric-sql/durable-session-proxy
  */
 
 import { z } from 'zod'

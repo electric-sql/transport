@@ -1,5 +1,5 @@
 {
-  "name": "@electric-sql/react-ai-db",
+  "name": "@electric-sql/react-durable-session",
   "version": "0.1.0",
   "description": "React bindings for durable chat client backed by TanStack DB and Durable Streams.",
   "type": "module",
@@ -23,7 +23,7 @@
   "author": "ElectricSQL",
   "license": "Apache-2.0",
   "dependencies": {
-    "@electric-sql/ai-db": "workspace:*",
+    "@electric-sql/durable-session": "workspace:*",
     "@tanstack/react-db": "workspace:*"
   },
   "devDependencies": {
