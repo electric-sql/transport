@@ -60,6 +60,7 @@ export {
   type ChunkValue,
   type ChunkRow,
   type PresenceValue,
+  type RawPresenceRow,
   type PresenceRow,
   type AgentValue,
   type AgentRow,
@@ -170,6 +171,10 @@ export {
   createModelMessagesCollection,
   type ModelMessage,
   type ModelMessagesCollectionOptions,
+
+  // Aggregated presence collection
+  createPresenceCollection,
+  type PresenceCollectionOptions,
 } from './collections'
 
 // ============================================================================

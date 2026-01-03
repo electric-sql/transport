@@ -2,7 +2,7 @@
  * Agent configuration for the demo.
  */
 
-import type { AgentSpec } from '@electric-sql/react-ai-db'
+import type { AgentSpec } from '@electric-sql/react-durable-session'
 import { appUrl } from './config'
 
 export const KERMIT_AGENT: AgentSpec = {

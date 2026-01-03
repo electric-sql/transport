@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod'
-import type { SessionDB, MessageRow, ModelMessage } from '@electric-sql/ai-db'
+import type { SessionDB, MessageRow, ModelMessage } from '@electric-sql/durable-session'
 import type { Collection } from '@tanstack/db'
 
 // ============================================================================

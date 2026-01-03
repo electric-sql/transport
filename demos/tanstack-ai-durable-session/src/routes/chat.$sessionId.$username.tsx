@@ -1,23 +1,28 @@
 import { useEffect, useRef, useMemo, useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Send, Square, Wifi, WifiOff, RefreshCw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
-import { useDurableChat } from '@electric-sql/react-ai-db'
-import type { ConnectionStatus, ChunkRow, DurableChatCollections } from '@electric-sql/react-ai-db'
-import { useLiveQuery } from '@tanstack/react-db'
+import { useDurableChat } from '@electric-sql/react-durable-session'
+import type { ConnectionStatus, ChunkRow, DurableChatCollections } from '@electric-sql/react-durable-session'
+import { useLiveQuery, eq } from '@tanstack/react-db'
 import type { UIMessage } from '@tanstack/ai'
 import { proxyUrl } from '../lib/config'
 import { KERMIT_AGENT } from '../lib/agents'
 import { PresenceBar } from '../components/PresenceBar'
-import type { AgentSpec } from '@electric-sql/react-ai-db'
+import type { AgentSpec } from '@electric-sql/react-durable-session'
 
 export const Route = createFileRoute('/chat/$sessionId/$username')({
   loader: async ({ params }) => {
     const { sessionId, username } = params
+
+    // Generate a unique deviceId for this tab/page load.
+    // This solves the page refresh race condition where logout and login
+    // events could conflict (old deviceId logs out, new deviceId logs in).
+    const deviceId = crypto.randomUUID()
 
     // Call the login API (idempotent - creates session if needed, writes presence)
     // This runs on every page load, which is acceptable since the login API is idempotent
@@ -26,6 +31,7 @@ export const Route = createFileRoute('/chat/$sessionId/$username')({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         actorId: username,
+        deviceId,
         name: username,
         defaultAgents: [KERMIT_AGENT],
       }),
@@ -35,23 +41,23 @@ export const Route = createFileRoute('/chat/$sessionId/$username')({
       throw new Error('Failed to create session')
     }
 
-    return { sessionId, username }
+    return { sessionId, username, deviceId }
   },
   component: ChatPage,
 })
 
 function ChatPage() {
-  const { sessionId, username } = Route.useLoaderData()
+  const { sessionId, username, deviceId } = Route.useLoaderData()
 
-  return <AuthenticatedChat sessionId={sessionId} username={username} />
-}
+  // Store deviceId in sessionStorage so the root layout's logout button can access it
+  // Must be in useEffect because loader runs on server where sessionStorage isn't available
+  useEffect(() => {
+    sessionStorage.setItem('deviceId', deviceId)
+    return () => {
+      // Don't clear on unmount - we need it for logout which happens after unmount
+    }
+  }, [deviceId])
 
-interface AuthenticatedChatProps {
-  sessionId: string
-  username: string
-}
-
-function AuthenticatedChat({ sessionId, username }: AuthenticatedChatProps) {
   const {
     messages,
     sendMessage,
@@ -72,15 +78,21 @@ function AuthenticatedChat({ sessionId, username }: AuthenticatedChatProps) {
   useEffect(() => {
     const handlePageHide = () => {
       // Use sendBeacon for reliable delivery during page unload
+      // Include deviceId so we logout only this tab, not all devices
+      // IMPORTANT: Use text/plain to avoid CORS preflight - application/json
+      // triggers OPTIONS request which can't complete during page unload
       navigator.sendBeacon(
         `${proxyUrl}/v1/sessions/${sessionId}/logout`,
-        JSON.stringify({ actorId: username })
+        new Blob(
+          [JSON.stringify({ actorId: username, deviceId })],
+          { type: 'text/plain' }
+        )
       )
     }
 
     window.addEventListener('pagehide', handlePageHide)
     return () => window.removeEventListener('pagehide', handlePageHide)
-  }, [sessionId, username])
+  }, [sessionId, username, deviceId])
 
   const handleSubmit = async (input: string) => {
     if (!input.trim() || isLoading) return
@@ -89,6 +101,13 @@ function AuthenticatedChat({ sessionId, username }: AuthenticatedChatProps) {
 
   return (
     <div className="flex h-[calc(100vh-73px)]">
+      {/* Cross-tab logout detector - client-only due to useLiveQuery SSR limitation */}
+      <ClientOnlyLogoutDetector
+        collections={collections}
+        username={username}
+        deviceId={deviceId}
+      />
+
       {/* Chat Panel */}
       <div className="flex-1 flex flex-col border-r border-gray-800">
         {/* Presence & Agent Bar - client-only due to useLiveQuery SSR limitation */}
@@ -165,6 +184,87 @@ function ClientOnlyPresenceBar({
       unregisterAgent={unregisterAgent}
     />
   )
+}
+
+/**
+ * Client-only wrapper for logout detection.
+ * useLiveQuery doesn't support SSR (missing getServerSnapshot), so we only render on client.
+ */
+function ClientOnlyLogoutDetector({
+  collections,
+  username,
+  deviceId,
+}: {
+  collections: DurableChatCollections
+  username: string
+  deviceId: string
+}) {
+  const [isClient, setIsClient] = useState(false)
+
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
+
+  if (!isClient) {
+    return null
+  }
+
+  return (
+    <LogoutDetector
+      collections={collections}
+      username={username}
+      deviceId={deviceId}
+    />
+  )
+}
+
+/**
+ * Detects when the current user is logged out from another tab/device
+ * and redirects to the login page.
+ */
+function LogoutDetector({
+  collections,
+  username,
+  deviceId,
+}: {
+  collections: DurableChatCollections
+  username: string
+  deviceId: string
+}) {
+  const navigate = useNavigate()
+  const [wasLoggedIn, setWasLoggedIn] = useState(false)
+
+  // Watch for current user's presence
+  const myPresence = useLiveQuery(
+    (q) =>
+      q
+        .from({ presence: collections.presence })
+        .where(({ presence }) => eq(presence.actorId, username)),
+    [collections.presence, username]
+  )
+
+  // Redirect when logged out from another tab/device
+  useEffect(() => {
+    // Skip while loading
+    if (!myPresence.data) return
+
+    // Check if user exists in presence with current device
+    // Query filters for actorId=username, so at most one result
+    const userRecord = myPresence.data[0]
+    const isLoggedIn = userRecord?.deviceIds.includes(deviceId) ?? false
+
+    if (isLoggedIn) {
+      // Mark that we've seen ourselves logged in
+      setWasLoggedIn(true)
+    } else if (wasLoggedIn) {
+      // Was logged in before, but now logged out
+      // Clear sessionStorage and redirect
+      sessionStorage.removeItem('deviceId')
+      navigate({ to: '/login' })
+    }
+  }, [myPresence.data, deviceId, wasLoggedIn, navigate, username])
+
+  return null
 }
 
 /**

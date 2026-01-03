@@ -72,14 +72,16 @@ export type ChunkValue = z.infer<typeof chunkValueSchema>
 /**
  * Presence schema for tracking online users and agents.
  *
- * Uses upsert semantics - each actor has one presence record that is
- * updated when their status changes.
+ * Uses upsert semantics with (actorId, deviceId) pairs.
+ * Each tab/page load gets a unique deviceId.
  *
- * Key format: `${actorId}` - e.g., "user-123", "agent-1"
+ * Key format: `${actorId}:${deviceId}` - e.g., "user-123:device-abc"
  */
 export const presenceValueSchema = z.object({
-  /** Actor identifier (same as key) */
+  /** Actor identifier */
   actorId: z.string(),
+  /** Device/tab identifier - unique per browser tab/page load */
+  deviceId: z.string(),
   /** Actor type - 'user' or 'agent' */
   actorType: z.enum(['user', 'agent']),
   /** Optional display name */
@@ -170,12 +172,14 @@ export const sessionStateSchema = createStateSchema({
   /**
    * Presence collection - online status of users and agents.
    *
-   * Uses upsert semantics for updates. Primary key `actorId` from event.key.
+   * Uses upsert semantics with (actorId, deviceId) pairs.
+   * Primary key `id` is injected from event.key = `${actorId}:${deviceId}`
+   * This follows the same pattern as chunks.
    */
   presence: {
     schema: presenceValueSchema,
     type: 'presence',
-    primaryKey: 'actorId',
+    primaryKey: 'id',
   },
 
   /**
@@ -209,10 +213,37 @@ export type ChunkRow = ChunkValue & {
 }
 
 /**
- * PresenceRow - a presence value with the `actorId` key.
- * (Note: actorId is already in the schema, so this is the same as PresenceValue)
+ * RawPresenceRow - a presence value with the injected `id` primary key.
+ *
+ * This is the type of rows in raw presence collection after stream-db
+ * injects the primary key from the event key = `${actorId}:${deviceId}`
+ *
+ * This is the internal/raw type. For the public API, use PresenceRow
+ * which is an aggregated view per actor.
  */
-export type PresenceRow = PresenceValue
+export type RawPresenceRow = PresenceValue & {
+  /** Primary key - injected from event.key = `${actorId}:${deviceId}` */
+  id: string
+}
+
+/**
+ * PresenceRow - aggregated presence per actor.
+ *
+ * This is the public type exposed to components. It aggregates
+ * all devices for an actor into a single row showing who's online.
+ */
+export type PresenceRow = {
+  /** Actor identifier */
+  actorId: string
+  /** Actor type - 'user' or 'agent' */
+  actorType: 'user' | 'agent'
+  /** Optional display name */
+  name?: string
+  /** All online device IDs for this actor */
+  deviceIds: string[]
+  /** Number of online devices */
+  deviceCount: number
+}
 
 /**
  * AgentRow - an agent value with the `agentId` key.

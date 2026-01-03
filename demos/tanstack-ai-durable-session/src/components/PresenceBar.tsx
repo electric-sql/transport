@@ -1,11 +1,14 @@
 /**
  * PresenceBar - Shows agents and online users in the session.
+ *
+ * The presence collection is now pre-aggregated per actor (filtering for online).
+ * We just need to filter by actorType since online filtering is done upstream.
  */
 
 import { useLiveQuery } from '@tanstack/react-db'
 import { eq } from '@tanstack/db'
 import { AVAILABLE_AGENTS } from '../lib/agents'
-import type { AgentSpec, DurableChatCollections, PresenceRow } from '@electric-sql/react-ai-db'
+import type { AgentSpec, DurableChatCollections, PresenceRow } from '@electric-sql/react-durable-session'
 
 interface PresenceBarProps {
   collections: DurableChatCollections
@@ -24,13 +27,12 @@ export function PresenceBar({
     [collections.agents]
   )
 
-  // Get online users
+  // Get online users - presence is already aggregated and filtered for online
   const onlineUsers = useLiveQuery(
     (q) =>
       q
         .from({ presence: collections.presence })
-        .where(({ presence }) => eq(presence.actorType, 'user'))
-        .where(({ presence }) => eq(presence.status, 'online')),
+        .where(({ presence }) => eq(presence.actorType, 'user')),
     [collections.presence]
   )
 

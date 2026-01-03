@@ -67,3 +67,9 @@ export {
   type ModelMessage,
   type ModelMessagesCollectionOptions,
 } from './model-messages'
+
+// Aggregated presence collection (derived from raw per-device presence)
+export {
+  createPresenceCollection,
+  type PresenceCollectionOptions,
+} from './presence'

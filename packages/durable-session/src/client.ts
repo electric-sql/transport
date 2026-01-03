@@ -35,6 +35,7 @@ import {
   createActiveGenerationsCollection,
   createSessionMetaCollectionOptions,
   createSessionStatsCollection,
+  createPresenceCollection,
   createInitialSessionMeta,
   updateConnectionStatus,
   updateSyncProgress,
@@ -175,7 +176,8 @@ export class DurableChatClient<
    */
   private createCollections() {
     // Get root collections from stream-db (always available - from real or mock SessionDB)
-    const { chunks, presence, agents } = this._db.collections
+    // Note: rawPresence contains per-device records; we expose aggregated presence
+    const { chunks, presence: rawPresence, agents } = this._db.collections
 
     // Stage 1: Create collected messages (intermediate - groups by messageId)
     const collectedMessages = createCollectedMessagesCollection({
@@ -224,6 +226,13 @@ export class DurableChatClient<
     const sessionStats = createSessionStatsCollection({
       sessionId: this.sessionId,
       chunksCollection: chunks,
+    })
+
+    // Create aggregated presence collection (groups by actorId, filters for online)
+    // This provides a "who's online" view rather than raw per-device records
+    const presence = createPresenceCollection({
+      sessionId: this.sessionId,
+      rawPresenceCollection: rawPresence,
     })
 
     return {

@@ -409,19 +409,25 @@ export class AIDBSessionProtocol {
 
   /**
    * Write a presence update to the stream.
+   *
+   * Uses composite key `${actorId}:${deviceId}` to track per-device presence.
+   *
+   * @param deviceId - Unique identifier per browser tab/page load
    */
   async writePresence(
     stream: DurableStream,
     sessionId: string,
     actorId: string,
+    deviceId: string,
     actorType: 'user' | 'agent',
     status: 'online' | 'offline' | 'away',
     name?: string
   ): Promise<void> {
     const event = sessionStateSchema.presence.upsert({
-      key: actorId,
+      key: `${actorId}:${deviceId}`,
       value: {
         actorId,
+        deviceId,
         actorType,
         name,
         status,
@@ -429,10 +435,32 @@ export class AIDBSessionProtocol {
       },
     })
 
-    const result = await stream.append(event)
+    await stream.append(event)
     this.updateLastActivity(sessionId)
+  }
 
-    return result
+  /**
+   * Get all online device IDs for an actor from the raw presence collection.
+   *
+   * Used for "logout all devices" functionality.
+   */
+  async getDeviceIdsForActor(sessionId: string, actorId: string): Promise<string[]> {
+    const state = this.sessionStates.get(sessionId)
+    if (!state) {
+      return []
+    }
+
+    // Read from the raw presence collection (RawPresenceRow)
+    const presence = state.sessionDB.collections.presence
+    const deviceIds: string[] = []
+
+    for (const row of presence.values()) {
+      if (row.actorId === actorId && row.status === 'online') {
+        deviceIds.push(row.deviceId)
+      }
+    }
+
+    return deviceIds
   }
 
   /**

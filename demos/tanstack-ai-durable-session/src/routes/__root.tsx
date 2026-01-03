@@ -48,14 +48,17 @@ function RootLayout() {
   const handleLogout = async () => {
     if (session) {
       try {
+        // Explicit logout logs out ALL devices for this user
         await fetch(`${proxyUrl}/v1/sessions/${session.sessionId}/logout`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ actorId: session.username }),
+          body: JSON.stringify({ actorId: session.username, allDevices: true }),
         })
-      } catch {
-        // Ignore errors - we're logging out anyway
+      } catch (error) {
+        console.error('Logout error:', error)
       }
+      // Clear deviceId from sessionStorage
+      sessionStorage.removeItem('deviceId')
       navigate({ to: '/login' })
     }
   }
@@ -65,11 +68,11 @@ function RootLayout() {
       <header className="border-b border-orange-500/20 bg-gray-900/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold bg-linear-to-r from-orange-500 to-red-600 text-transparent bg-clip-text">
-            TanStack AI + Durable Sessions
+            TanStack AI - DB - Durable Sessions
           </h1>
           <div className="flex items-center gap-4">
             <div className="text-gray-400 text-sm">
-              Persistent, resumable AI chat via TanStack DB
+              Persistent, resumable, multi-user, multi-agent, AI chat
             </div>
             {session && (
               <div className="flex items-center gap-3">

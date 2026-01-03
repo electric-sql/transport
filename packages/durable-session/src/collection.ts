@@ -11,7 +11,7 @@
 
 import { createStreamDB, type StreamDB, type StreamDBMethods } from '@durable-streams/state'
 import type { Collection } from '@tanstack/db'
-import { sessionStateSchema, type ChunkRow, type PresenceRow, type AgentRow } from './schema'
+import { sessionStateSchema, type ChunkRow, type RawPresenceRow, type AgentRow } from './schema'
 import type { SessionDBConfig } from './types'
 
 // ============================================================================
@@ -21,13 +21,16 @@ import type { SessionDBConfig } from './types'
 /**
  * Collections map with correct row types.
  *
- * stream-db injects the primary key field at runtime, so ChunkRow includes
- * the `id` field even though it's not in the schema. We define the correct
- * types here.
+ * stream-db injects the primary key field at runtime, so ChunkRow and
+ * RawPresenceRow include the `id` field even though it's not in the schema.
+ * We define the correct types here.
+ *
+ * Note: The presence collection here is the raw per-device presence.
+ * The aggregated per-actor presence is created in client.ts.
  */
 export interface SessionCollections {
   chunks: Collection<ChunkRow>
-  presence: Collection<PresenceRow>
+  presence: Collection<RawPresenceRow>
   agents: Collection<AgentRow>
 }
 

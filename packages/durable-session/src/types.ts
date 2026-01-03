@@ -288,13 +288,14 @@ import type { ChunkRow, PresenceRow, AgentRow } from './schema'
  * functions needed to access the data. This is achieved through a two-stage
  * pipeline: aggregate first (groupBy + collect), then materialize (fn.select).
  *
- * The `chunks`, `presence`, and `agents` collections are synced directly from
- * the Durable Stream via stream-db. Other collections are derived from chunks.
+ * The `chunks` and `agents` collections are synced directly from the Durable
+ * Stream via stream-db. The `presence` collection is aggregated from raw
+ * per-device presence records. Other collections are derived from chunks.
  */
 export interface DurableChatCollections {
   /** Root chunks collection synced from Durable Stream via stream-db */
   chunks: Collection<ChunkRow>
-  /** Presence collection - online status of users and agents (from stream-db) */
+  /** Aggregated presence - one row per online actor with their device count */
   presence: Collection<PresenceRow>
   /** Agents collection - registered webhook agents (from stream-db) */
   agents: Collection<AgentRow>
