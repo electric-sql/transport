@@ -58,11 +58,7 @@ export {
   type MessageRole,
   type MessageRow,
   type ActiveGenerationRow,
-  type ToolCallState,
-  type ToolCallRow,
-  type ToolResultRow,
-  type ApprovalStatus,
-  type ApprovalRow,
+  type RawPresenceRow,
   type PresenceRow,
   type AgentRow,
   type ConnectionStatus,
@@ -76,6 +72,13 @@ export {
   type ApprovalResponseInput,
   type ForkOptions,
   type ForkResult,
+
+  // Re-exported TanStack AI types for consumer convenience
+  type MessagePart,
+  type TextPart,
+  type ToolCallPart,
+  type ToolResultPart,
+  type ThinkingPart,
 
   // Materialization helpers
   extractTextContent,
