@@ -64,7 +64,7 @@ function RootLayout() {
   }
 
   return (
-    <>
+    <div>
       <header className="border-b border-orange-500/20 bg-gray-900/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold bg-linear-to-r from-orange-500 to-red-600 text-transparent bg-clip-text">
@@ -100,7 +100,7 @@ function RootLayout() {
         </div>
       </header>
       <Outlet />
-    </>
+    </div>
   )
 }
 
@@ -138,7 +138,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="min-h-screen bg-gray-900">
-        {children}
+        <div id="app">{children}</div>
         <TanStackDevtools
           config={{
             position: 'bottom-right',
