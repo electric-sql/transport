@@ -12,11 +12,11 @@
   />
 </picture>
 
-# Durable Transport &amp; Durable Session
+# Durable Transport &amp; Durable Sessions
 
 [Durable Streams](https://github.com/durable-streams/durable-streams) based durable transport and session implementations for [TanStack AI](https://tanstack.com/ai) and the [Vercel AI SDK](https://ai-sdk.dev).
 
-See the [Durable Sessions — the key pattern for collaborative AI](https://electric-sql.com/blog/2026/01/05/durable-sessions-for-collaborative-ai) blog post for more information.
+See the [Durable Sessions — the key pattern for collaborative AI](https://electric-sql.com/blog/2026/01/12/durable-sessions-for-collaborative-ai) blog post for more information.
 
 ## Durable Transport
 
@@ -37,13 +37,13 @@ Demos:
 - [TanStack AI Durable Transport demo](./demos/tanstack-ai-durable-transport)
 - [Vercel AI SDK Durable Transport demo](./demos/vercel-ai-sdk-durable-transport)
 
-## Durable Session
+## Durable Sessions
 
 The Durable Sessions pattern swaps out the request <> response based interaction paradigm of the AI SDKs for a sync-based pattern based on [TanStack DB](https://tanstack.com/db). Persistence and addressability is provided by a Durable Stream, using the [`@durable-streams/state`](https://github.com/durable-streams/durable-streams/tree/main/packages/state) protocol.
 
 The Durable Stream provides persistence and addressability. The sync-based architecture naturally supports multi-tab, multi-device and multi-user. The session supports multi-agent and real-time presence.
 
-You can use this pattern to build [genuinely collaborative AI apps](https://electric-sql.com/blog/2026/01/05/durable-sessions-for-collaborative-ai) that support both real-time and asynchronous collaboration. Everything is reactive and type-safe, with zero changes to your actual AI engineering code.
+You can use this pattern to build [genuinely collaborative AI apps](https://electric-sql.com/blog/2026/01/12/durable-sessions-for-collaborative-ai) that support both real-time and asynchronous collaboration. Everything is reactive and type-safe, with zero changes to your actual AI engineering code.
 
 Packages:
 
@@ -84,3 +84,11 @@ cat example.json | durable-stream-dev write "sessions/default" --json
 ## Caveats
 
 Some dependencies are still currently workspace dependencies. See `pnpm-workspace.yaml` for details.
+
+## Project links
+
+- [Electric](https://electric-sql.com)
+- [Durable Streams](https://github.com/durable-streams/durable-streams)
+- [TanStack DB](https://tanstack.com/db)
+- [TanStack AI](https://tanstack.com/ai)
+- [Vercel AI SDK](https://ai-sdk.dev)
