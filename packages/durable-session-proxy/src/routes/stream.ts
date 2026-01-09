@@ -49,7 +49,7 @@ const HEADERS_TO_STRIP = [
 /**
  * Create stream proxy routes.
  *
- * @param baseUrl - The base URL of the Durable Streams server (e.g., http://localhost:3001)
+ * @param baseUrl - The base URL of the Durable Streams server (e.g., http://localhost:4437)
  */
 export function createStreamRoutes(baseUrl: string) {
   const app = new Hono()

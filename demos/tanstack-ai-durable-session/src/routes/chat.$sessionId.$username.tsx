@@ -71,7 +71,6 @@ function ChatPage() {
     sessionId,
     proxyUrl,
     actorId: username,
-    // No inline agent - use registered agents only
   })
 
   // Auto-logout when page closes
@@ -96,6 +95,7 @@ function ChatPage() {
 
   const handleSubmit = async (input: string) => {
     if (!input.trim() || isLoading) return
+
     await sendMessage(input.trim())
   }
 
@@ -550,7 +550,7 @@ function ChatInput({ onSubmit, isLoading, connectionStatus, onStop }: ChatInputP
       <div className="relative">
         <textarea
           ref={inputRef}
-          placeholder="Type a message... (use @oscar to talk to Oscar)"
+          placeholder="Type a message..."
           className="w-full rounded-lg border border-gray-700 bg-gray-800/50 px-4 py-3 pr-12 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent resize-none"
           rows={1}
           disabled={isLoading || connectionStatus !== 'connected'}

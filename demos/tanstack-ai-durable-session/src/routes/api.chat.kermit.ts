@@ -27,8 +27,6 @@ export const Route = createFileRoute('/api/chat/kermit')({
         try {
           const { messages } = await request.json()
 
-          console.log('messages', messages.length, messages)
-
           // Check if this is an @oscar message - if so, don't respond
           const lastMessage = messages[messages.length - 1]
           const lastContent = typeof lastMessage?.content === 'string'

@@ -13,3 +13,12 @@ code {
   font-family:
     source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
+
+.no-wrap {
+  white-space: nowrap;
+}
+
+.prose hr {
+  opacity: 0;
+  margin: 0.25rem 0;
+}

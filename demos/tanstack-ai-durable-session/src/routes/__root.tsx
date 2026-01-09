@@ -64,15 +64,16 @@ function RootLayout() {
   }
 
   return (
-    <>
+    <div>
       <header className="border-b border-orange-500/20 bg-gray-900/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold bg-linear-to-r from-orange-500 to-red-600 text-transparent bg-clip-text">
-            TanStack AI - DB - Durable Sessions
+            TanStack AI - <span className="no-wrap">Durable Sessions</span>
           </h1>
           <div className="flex items-center gap-4">
             <div className="text-gray-400 text-sm">
-              Persistent, resumable, multi-user, multi-agent, AI chat
+              Persistent, resumable, multi-user, <span className="no-wrap">
+                multi-agent</span>.
             </div>
             {session && (
               <div className="flex items-center gap-3">
@@ -100,7 +101,7 @@ function RootLayout() {
         </div>
       </header>
       <Outlet />
-    </>
+    </div>
   )
 }
 
@@ -138,7 +139,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="min-h-screen bg-gray-900">
-        {children}
+        <div id="app">{children}</div>
         <TanStackDevtools
           config={{
             position: 'bottom-right',
