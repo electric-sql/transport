@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile.durable-streams
     ports:
-      - 3001:4437
+      - 4437:4437
     volumes:
       - durable-streams-data:/app/data
 

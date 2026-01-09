@@ -8,7 +8,7 @@ import { serve } from '@hono/node-server'
 import { createServer } from './server'
 
 const PORT = parseInt(process.env.PORT ?? '4000', 10)
-const DURABLE_STREAMS_URL = process.env.DURABLE_STREAMS_URL ?? 'http://localhost:3001'
+const DURABLE_STREAMS_URL = process.env.DURABLE_STREAMS_URL ?? 'http://localhost:4437'
 
 const { app } = createServer({
   baseUrl: DURABLE_STREAMS_URL,

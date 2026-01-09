@@ -72,7 +72,8 @@ function RootLayout() {
           </h1>
           <div className="flex items-center gap-4">
             <div className="text-gray-400 text-sm">
-              Persistent, resumable, multi-user, multi-agent
+              Persistent, resumable, multi-user, <span className="no-wrap">
+                multi-agent</span>.
             </div>
             {session && (
               <div className="flex items-center gap-3">

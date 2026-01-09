@@ -63,7 +63,7 @@ pnpm build
 pnpm test
 
 # In one terminal
-pnpm backend:up  # Starts Durable Streams server on port 3001
+pnpm backend:up  # Starts Durable Streams server on port 4437
 pnpm dev:session-proxy # Starts session proxy for session demo
 # pnpm dev:proxy # for transport demos
 

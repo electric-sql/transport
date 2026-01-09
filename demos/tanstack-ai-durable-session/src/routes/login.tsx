@@ -34,7 +34,7 @@ function LoginPage() {
     <div className="flex items-center justify-center min-h-[calc(100vh-73px)]">
       <div className="w-full max-w-md p-8 bg-gray-800 rounded-lg border border-gray-700">
         <h2 className="text-2xl font-bold text-white mb-6 text-center">
-          Join Chat Session
+          Join Durable Session
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
